@@ -13,6 +13,7 @@ dist/
 *.hp
 *.eventlog
 
+.DS_Store
 .ghc.environment.*
 cabal.project.local
 cabal.project.local~
