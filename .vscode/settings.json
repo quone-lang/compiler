@@ -1,0 +1,10 @@
+{
+  "[haskell]": {
+    "editor.defaultFormatter": "haskell.haskell",
+    "editor.formatOnSave": true
+  },
+  "haskell.formattingProvider": "fourmolu",
+  "haskell.plugin.hlint.diagnosticsOn": true,
+  "haskell.plugin.hlint.codeActionsOn": true,
+  "haskell.checkParents": "CheckOnSave"
+}
