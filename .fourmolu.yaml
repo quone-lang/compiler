@@ -1,0 +1,8 @@
+indentation: 4
+column-limit: 80
+comma-style: leading
+import-export-style: leading
+function-arrows: trailing
+let-style: newline
+in-style: left-align
+respectful: true

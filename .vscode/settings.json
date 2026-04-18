@@ -4,6 +4,7 @@
     "editor.formatOnSave": true
   },
   "haskell.formattingProvider": "fourmolu",
+  "haskell.plugin.fourmolu.config.external": true,
   "haskell.plugin.hlint.diagnosticsOn": true,
   "haskell.plugin.hlint.codeActionsOn": true,
   "haskell.checkParents": "CheckOnSave"

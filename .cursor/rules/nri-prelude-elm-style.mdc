@@ -1,0 +1,14 @@
+---
+description: Use nri-prelude and Elm-style Haskell conventions
+alwaysApply: true
+---
+
+# NriPrelude And Elm Style
+
+- This project uses `nri-prelude` from the pinned `source-repository-package` in `cabal.project`.
+- Prefer `NoImplicitPrelude` plus `import NriPrelude` in Haskell modules.
+- Reach for `Text`, `List`, `Maybe`, and `Result` APIs from `nri-prelude` before `Prelude`, `Data.Text`, `Data.List`, `Data.Maybe`, or `Either`.
+- Favor small pure functions, explicit top-level type signatures, and pipeline-oriented code with `|>`.
+- Model domain failures with custom types and `Result` values instead of exceptions when practical.
+- Keep formatting Elm-like: 4-space indentation, leading commas in multiline lists/imports/exports, and an 80-column target via `.fourmolu.yaml`.
+- Preserve this style in code, examples, docs, and build config unless the user explicitly asks to change it.
