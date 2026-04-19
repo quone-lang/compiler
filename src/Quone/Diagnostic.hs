@@ -11,6 +11,7 @@ module Quone.Diagnostic
     ( Category (..)
     , Severity (..)
     , Diagnostic (..)
+    , DiagnosticsFormat (..)
     , categoryName
     , render
     )
@@ -49,6 +50,19 @@ data Severity
     | Warning
     | Info
     deriving (Prelude.Show, Prelude.Eq, Prelude.Ord)
+
+
+-- | The output format diagnostics use on stderr. The default
+-- 'HumanDiagnostics' renders one diagnostic per multi-line block via
+-- 'render'; 'JsonDiagnostics' emits NDJSON via
+-- 'Quone.Diagnostic.Json.encodeDiagnostic'.
+--
+-- Selected by the cross-cutting CLI flag
+-- @--diagnostics-format=human|json@ (alias @--json@).
+data DiagnosticsFormat
+    = HumanDiagnostics
+    | JsonDiagnostics
+    deriving (Prelude.Show, Prelude.Eq)
 
 
 -- | A single diagnostic message tied to a source range.

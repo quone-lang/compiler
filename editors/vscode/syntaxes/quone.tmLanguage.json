@@ -1,0 +1,130 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "Quone",
+  "scopeName": "source.quone",
+  "fileTypes": ["Q"],
+  "patterns": [
+    { "include": "#doc-comments" },
+    { "include": "#comments" },
+    { "include": "#strings" },
+    { "include": "#numbers" },
+    { "include": "#keywords" },
+    { "include": "#dataframe-verbs" },
+    { "include": "#types" },
+    { "include": "#operators" },
+    { "include": "#identifiers" }
+  ],
+  "repository": {
+    "doc-comments": {
+      "patterns": [
+        {
+          "name": "comment.block.documentation.quone",
+          "match": "#'.*$"
+        }
+      ]
+    },
+    "comments": {
+      "patterns": [
+        {
+          "name": "comment.line.number-sign.quone",
+          "match": "(?<!')#.*$"
+        }
+      ]
+    },
+    "strings": {
+      "name": "string.quoted.double.quone",
+      "begin": "\"",
+      "end": "\"",
+      "patterns": [
+        {
+          "name": "constant.character.escape.quone",
+          "match": "\\\\."
+        }
+      ]
+    },
+    "numbers": {
+      "patterns": [
+        {
+          "name": "constant.numeric.float.quone",
+          "match": "\\b[0-9]+\\.[0-9]+\\b"
+        },
+        {
+          "name": "constant.numeric.integer.quone",
+          "match": "\\b[0-9]+\\b"
+        }
+      ]
+    },
+    "keywords": {
+      "patterns": [
+        {
+          "name": "keyword.control.quone",
+          "match": "\\b(if|then|else|case|of|let|in)\\b"
+        },
+        {
+          "name": "keyword.declaration.quone",
+          "match": "\\b(module|exporting|type|alias|import)\\b"
+        },
+        {
+          "name": "constant.language.quone",
+          "match": "\\b(True|False)\\b"
+        }
+      ]
+    },
+    "dataframe-verbs": {
+      "patterns": [
+        {
+          "name": "support.function.dataframe.quone",
+          "match": "\\b(dataframe|select|filter|mutate|summarize|group_by|ungroup|arrange|rename|distinct|distinct_all|count|slice|pull|relocate|transmute|mutate_each|summarize_each|left_join|right_join|inner_join|full_join|anti_join|semi_join|cross_join)\\b"
+        },
+        {
+          "name": "keyword.modifier.quone",
+          "match": "\\b(desc|asc|on|as|where|cols)\\b"
+        }
+      ]
+    },
+    "types": {
+      "patterns": [
+        {
+          "name": "entity.name.type.quone",
+          "match": "\\b[A-Z][A-Za-z0-9_]*\\b"
+        }
+      ]
+    },
+    "operators": {
+      "patterns": [
+        {
+          "name": "keyword.operator.assignment.quone",
+          "match": "<-|=|\\bexporting\\b"
+        },
+        {
+          "name": "keyword.operator.arrow.quone",
+          "match": "->"
+        },
+        {
+          "name": "keyword.operator.pipe.quone",
+          "match": "\\|>"
+        },
+        {
+          "name": "keyword.operator.comparison.quone",
+          "match": "==|!=|>=|<=|>|<"
+        },
+        {
+          "name": "keyword.operator.arithmetic.quone",
+          "match": "\\+|-|\\*|/|//|%|\\^"
+        },
+        {
+          "name": "keyword.operator.field-access.quone",
+          "match": "\\."
+        }
+      ]
+    },
+    "identifiers": {
+      "patterns": [
+        {
+          "name": "variable.other.quone",
+          "match": "\\b[a-z][A-Za-z0-9_]*\\b"
+        }
+      ]
+    }
+  }
+}

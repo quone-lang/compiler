@@ -6,6 +6,8 @@ description:
     The Quone language compiler. Implements LANGUAGE.md v0.0.1: lexer,
     parser, AST, name resolution, Hindley-Milner type checker, dataframe
     verb typing, and R code generation (script and package modes).
+license:       MIT
+license-file:  LICENSE
 build-type:    Simple
 
 common shared
@@ -28,6 +30,7 @@ library
     exposed-modules:
         Quone.Position
         Quone.Diagnostic
+        Quone.Diagnostic.Json
         Quone.Lex.Token
         Quone.Lex.Lexer
         Quone.Parse.Cst
@@ -45,16 +48,35 @@ library
         Quone.Generate.R
         Quone.Generate.Module
         Quone.Generate.Package
+        Quone.Generate.SourceMap
+        Quone.Format.Doc
+        Quone.Format.Trivia
+        Quone.Format.Rules
+        Quone.Format.Format
+        Quone.Repl.Driver
+        Quone.Repl.Input
+        Quone.Repl.Meta
+        Quone.Repl.RBackend
+        Quone.Repl.Session
+        Quone.Lsp.Json
+        Quone.Lsp.Protocol
+        Quone.Lsp.State
+        Quone.Lsp.Compile
+        Quone.Lsp.Symbols
+        Quone.Lsp.Handlers
+        Quone.Lsp.Server
         Quone.Cli.Main
         Quone.Cli.Commands
     build-depends:
         , base         ^>=4.21.0.0
+        , bytestring
         , containers
         , directory
         , filepath
         , megaparsec   >= 9.0 && < 10
         , nri-prelude  ^>=0.6.1.2
         , parser-combinators
+        , process
         , text
 
 executable quonec
@@ -83,8 +105,15 @@ test-suite quonec-test
         Test.PackageTests
         Test.CorpusTests
         Test.PropertyTests
+        Test.JsonDiagnosticTests
+        Test.SourceMapTests
+        Test.FormatTests
+        Test.ReplTests
+        Test.LspTests
+        Test.CliTests
     build-depends:
         , base         ^>=4.21.0.0
+        , bytestring
         , compiler
         , containers   >= 0.6 && < 0.8
         , directory

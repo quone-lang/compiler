@@ -18,3 +18,9 @@ dist/
 cabal.project.local
 cabal.project.local~
 cabal.project.freeze
+
+# VS Code / Positron extension build outputs (editors/vscode/)
+editors/vscode/node_modules/
+editors/vscode/out/
+editors/vscode/dist/
+*.vsix

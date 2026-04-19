@@ -24,6 +24,8 @@ module Quone.Lex.Lexer
     ( lexFile
     , lexInput
     , runLexer
+    , collectComments
+    , Comment (..)
     )
 where
 
@@ -72,6 +74,61 @@ runLexer filename source =
     case P.runParser (rawTokens filename) (T.unpack filename) source of
         Prelude.Left err -> Prelude.Left (lexErrorToDiagnostic filename err)
         Prelude.Right toks -> Prelude.Right (layout toks)
+
+
+-- | A single @#@ line comment with its source span.
+--
+-- Doc-comments (@#'@) are NOT returned here -- they are first-class
+-- 'TDocBlock' tokens.
+data Comment = Comment
+    { commentSpan :: SourceSpan
+    , commentBody :: Text   -- excludes the leading "# "
+    }
+    deriving (Prelude.Show, Prelude.Eq)
+
+
+-- | Scan a source file for all @#@ line comments and their spans.
+--
+-- Used by the formatter so 'quonec fmt' can preserve user comments
+-- verbatim rather than dropping them. The returned comments are in
+-- source order.
+--
+-- Doc comments (@#'@) are excluded -- they are tracked as 'TDocBlock'
+-- tokens by the main lexer and copied through to the CST already.
+collectComments :: Text -> Text -> [Comment]
+collectComments filename source =
+    case P.runParser (commentScanner filename) (T.unpack filename) source of
+        Prelude.Left _ -> []
+        Prelude.Right cs -> cs
+
+
+commentScanner :: Text -> Lexer [Comment]
+commentScanner filename = do
+    cs <- P.many (P.try (commentOrSkip filename))
+    _ <- P.takeRest
+    Prelude.pure (Maybe.catMaybes cs)
+
+
+commentOrSkip :: Text -> Lexer (Maybe Comment)
+commentOrSkip filename =
+    P.choice
+        [ Just <$> oneComment filename
+        , Nothing <$ P.satisfy (\_ -> Prelude.True)
+        ]
+
+
+oneComment :: Text -> Lexer Comment
+oneComment filename = do
+    sp <- P.getSourcePos
+    _ <- PC.char '#'
+    P.notFollowedBy (PC.char '\'')
+    body <- P.takeWhileP Nothing (\c -> c /= '\n')
+    ep <- P.getSourcePos
+    Prelude.pure
+        Comment
+            { commentSpan = mkSpan filename sp ep
+            , commentBody = T.stripStart body
+            }
 
 
 

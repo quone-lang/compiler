@@ -3,6 +3,10 @@
 The argument parser lives in 'Quone.Cli.Main'; this module owns the
 actual work each command performs.
 
+Every diagnostic-emitting command takes a 'DiagnosticsFormat' so the
+R companion package and editors can request NDJSON output instead of
+the default human-formatted blocks.
+
 -}
 module Quone.Cli.Commands
     ( cmdVersion
@@ -10,6 +14,7 @@ module Quone.Cli.Commands
     , cmdBuild
     , cmdBuildPackage
     , cmdRun
+    , cmdDeps
     , cmdFmt
     , cmdNew
     , cmdRepl
@@ -17,9 +22,12 @@ module Quone.Cli.Commands
     , compileScript
     , compilePackage
     , writePackage
+    , emitDiagnostic
+    , emitDiagnostics
     )
 where
 
+import qualified Control.Monad as CMonad
 import qualified Data.List as List
 import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
@@ -27,7 +35,13 @@ import NriPrelude
 import Quone.Ast.Source (Program)
 import Quone.Ast.Validate (validate)
 import qualified Quone.Diagnostic as Diag
-import Quone.Diagnostic (Diagnostic (..), render)
+import Quone.Diagnostic
+    ( Diagnostic (..)
+    , DiagnosticsFormat (..)
+    , render
+    )
+import qualified Quone.Diagnostic.Json as DiagJson
+import qualified Quone.Format.Format as Fmt
 import Quone.Generate.Module (generateModule, ModuleArtifact (..))
 import Quone.Generate.Package
     ( PackageArtifact (..)
@@ -35,14 +49,21 @@ import Quone.Generate.Package
     , generatePackage
     )
 import Quone.Generate.R (generateProgram)
+import Quone.Generate.SourceMap
+    ( SourceMap (..)
+    , buildSourceMap
+    , encodeSourceMap
+    )
 import Quone.Parse.Desugar (desugarFile)
 import qualified Quone.Position as Position
+import qualified Quone.Repl.Driver as Repl
 import qualified Quone.Resolve.Project as Project
 import Quone.Type.Infer (inferProgram)
 import qualified System.Directory as Dir
 import qualified System.Exit as Exit
 import qualified System.FilePath as FP
 import qualified System.IO as IO
+import qualified System.Process as Proc
 import qualified Prelude
 
 
@@ -55,52 +76,97 @@ cmdVersion = do
 
 
 -- | Type-check without emitting R. Used by editors / CI.
-cmdCheck :: Prelude.FilePath -> Prelude.IO Exit.ExitCode
-cmdCheck path = do
+cmdCheck :: DiagnosticsFormat -> Prelude.FilePath -> Prelude.IO Exit.ExitCode
+cmdCheck fmt path = do
     src <- TIO.readFile path
     case compileScript (T.pack path) src of
         Prelude.Left d -> do
-            TIO.hPutStrLn IO.stderr (render d)
+            emitDiagnostic fmt d
             Prelude.pure (Exit.ExitFailure 1)
-        Prelude.Right _ -> do
-            TIO.putStrLn "ok"
-            Prelude.pure Exit.ExitSuccess
+        Prelude.Right _ ->
+            case fmt of
+                JsonDiagnostics -> Prelude.pure Exit.ExitSuccess
+                HumanDiagnostics -> do
+                    TIO.putStrLn "ok"
+                    Prelude.pure Exit.ExitSuccess
 
 
--- | Compile a single .Q file to .R alongside it.
-cmdBuild :: Prelude.FilePath -> Prelude.IO Exit.ExitCode
-cmdBuild path = do
-    src <- TIO.readFile path
-    case compileScript (T.pack path) src of
-        Prelude.Left d -> do
-            TIO.hPutStrLn IO.stderr (render d)
-            Prelude.pure (Exit.ExitFailure 1)
-        Prelude.Right (_, rcode) -> do
-            let
-                outPath = FP.replaceExtension path "R"
-            TIO.writeFile outPath rcode
-            TIO.putStrLn (T.pack ("wrote " Prelude.++ outPath))
-            Prelude.pure Exit.ExitSuccess
-
-
--- | Compile and then run the resulting .R via the system R interpreter.
+-- | Compile a single .Q file to .R.
 --
--- For v0.0.1 we don't shell out to R from Haskell; we just print the
--- path so the user can run it themselves. A proper @cmdRun@ that
--- invokes Rscript is `[planned]`.
-cmdRun :: Prelude.FilePath -> Prelude.IO Exit.ExitCode
-cmdRun path = do
-    code <- cmdBuild path
+-- @outDir@ overrides the directory the @.R@ is written to (and the
+-- @.R.map@ sidecar if @sourcemap@ is set). When @Nothing@, the @.R@
+-- is written next to the input file as before.
+cmdBuild
+    :: DiagnosticsFormat
+    -> Maybe Prelude.FilePath
+    -> Prelude.Bool
+    -> Prelude.FilePath
+    -> Prelude.IO Exit.ExitCode
+cmdBuild fmt outDir sourcemap path = do
+    src <- TIO.readFile path
+    case compileScript (T.pack path) src of
+        Prelude.Left d -> do
+            emitDiagnostic fmt d
+            Prelude.pure (Exit.ExitFailure 1)
+        Prelude.Right (prog, rcode) -> do
+            let
+                outPath = case outDir of
+                    Prelude.Nothing -> FP.replaceExtension path "R"
+                    Just dir ->
+                        dir
+                            FP.</> FP.takeFileName
+                                (FP.replaceExtension path "R")
+            Dir.createDirectoryIfMissing Prelude.True (FP.takeDirectory outPath)
+            TIO.writeFile outPath rcode
+            CMonad.when sourcemap (writeSourceMap path outPath prog rcode)
+            case fmt of
+                JsonDiagnostics -> Prelude.pure Exit.ExitSuccess
+                HumanDiagnostics -> do
+                    TIO.putStrLn (T.pack ("wrote " Prelude.++ outPath))
+                    Prelude.pure Exit.ExitSuccess
+
+
+-- | Compile and then optionally invoke @Rscript@ on the result.
+--
+-- When @rscript@ is 'Prelude.False' the command keeps its v0.0.1
+-- behaviour of just printing the suggested @Rscript ...@ command. When
+-- 'Prelude.True' it shells out to @Rscript@ and returns its exit code.
+cmdRun
+    :: DiagnosticsFormat
+    -> Maybe Prelude.FilePath
+    -> Prelude.Bool
+    -> Prelude.Bool
+    -> Prelude.FilePath
+    -> Prelude.IO Exit.ExitCode
+cmdRun fmt outDir sourcemap rscript path = do
+    code <- cmdBuild fmt outDir sourcemap path
     case code of
         Exit.ExitSuccess -> do
-            TIO.putStrLn
-                ( T.pack ("Run with: Rscript " Prelude.++ FP.replaceExtension path "R"))
-            Prelude.pure Exit.ExitSuccess
+            let
+                outPath = case outDir of
+                    Prelude.Nothing -> FP.replaceExtension path "R"
+                    Just dir ->
+                        dir
+                            FP.</> FP.takeFileName
+                                (FP.replaceExtension path "R")
+            if rscript
+                then do
+                    (_, _, _, ph) <-
+                        Proc.createProcess
+                            (Proc.proc "Rscript" [outPath])
+                    Proc.waitForProcess ph
+                else do
+                    CMonad.when
+                        (fmt Prelude.== HumanDiagnostics)
+                        (TIO.putStrLn
+                            ( T.pack
+                                ( "Run with: Rscript " Prelude.++ outPath)))
+                    Prelude.pure Exit.ExitSuccess
         other -> Prelude.pure other
 
 
 -- | Build a multi-module Quone project into an R package directory
--- tree under @<projectDir>/build/@.
+-- tree under @<projectDir>/build/@ (or @<outDir>@ when set).
 --
 -- Layout per LANGUAGE.md section 14.6:
 --
@@ -113,26 +179,74 @@ cmdRun path = do
 -- @roxygen2::roxygenise@ should be invoked over the resulting
 -- directory to generate @man/@ entries; the CLI prints the suggested
 -- command on success.
-cmdBuildPackage :: Prelude.FilePath -> Prelude.IO Exit.ExitCode
-cmdBuildPackage projectDir = do
+cmdBuildPackage
+    :: DiagnosticsFormat
+    -> Maybe Prelude.FilePath
+    -> Prelude.Bool
+    -> Prelude.FilePath
+    -> Prelude.IO Exit.ExitCode
+cmdBuildPackage fmt outDir _sourcemap projectDir = do
     result <- compilePackage projectDir
     case result of
         Prelude.Left d -> do
-            TIO.hPutStrLn IO.stderr (render d)
+            emitDiagnostic fmt d
             Prelude.pure (Exit.ExitFailure 1)
         Prelude.Right pa -> do
             let
-                outDir = projectDir FP.</> "build"
-            writePackage outDir pa
-            TIO.putStrLn (T.pack ("wrote " Prelude.++ outDir))
-            TIO.putStrLn
-                ( T.pack
-                    ( "Generate man/ with: R -e \"roxygen2::roxygenise('"
-                        Prelude.++ outDir
-                        Prelude.++ "')\""
-                    )
-                )
+                outRoot = case outDir of
+                    Just d -> d
+                    Prelude.Nothing -> projectDir FP.</> "build"
+            writePackage outRoot pa
+            case fmt of
+                JsonDiagnostics -> Prelude.pure Exit.ExitSuccess
+                HumanDiagnostics -> do
+                    TIO.putStrLn (T.pack ("wrote " Prelude.++ outRoot))
+                    TIO.putStrLn
+                        ( T.pack
+                            ( "Generate man/ with: R -e \"roxygen2::roxygenise('"
+                                Prelude.++ outRoot
+                                Prelude.++ "')\""
+                            )
+                        )
+                    Prelude.pure Exit.ExitSuccess
+
+
+-- | Print the auto-derived runtime dependency set for a project.
+--
+-- Implements LANGUAGE.md section 13.9: the set is the union of all R
+-- packages the compiled output calls. Output format mirrors NDJSON
+-- when 'JsonDiagnostics' is selected, one JSON object per line:
+--
+-- @
+-- {"package":"dplyr"}
+-- {"package":"purrr"}
+-- {"package":"readr"}
+-- @
+--
+-- The human format prints one package name per line.
+cmdDeps :: DiagnosticsFormat -> Prelude.FilePath -> Prelude.IO Exit.ExitCode
+cmdDeps fmt projectDir = do
+    result <- compilePackage projectDir
+    case result of
+        Prelude.Left d -> do
+            emitDiagnostic fmt d
+            Prelude.pure (Exit.ExitFailure 1)
+        Prelude.Right pa -> do
+            let
+                deps = paDependencies pa
+            case fmt of
+                JsonDiagnostics ->
+                    Prelude.mapM_ (TIO.putStrLn Prelude.. depJson) deps
+                HumanDiagnostics ->
+                    Prelude.mapM_ TIO.putStrLn deps
             Prelude.pure Exit.ExitSuccess
+
+
+depJson :: Text -> Text
+depJson pkg =
+    "{\"package\":\""
+        Prelude.<> T.replace "\"" "\\\"" pkg
+        Prelude.<> "\"}"
 
 
 -- | Write a 'PackageArtifact' to a directory tree.
@@ -154,12 +268,43 @@ writePackage outDir pa = do
         (paModules pa)
 
 
--- | Format a .Q file in place. v0.0.1 stub per
--- LANGUAGE.md section 19.7.
+-- | Format a .Q file in place.
+--
+-- Wraps the elm-format-style formatter in 'Quone.Format.Format'. See
+-- LANGUAGE.md section 3.2.1 (naming conventions) and the planned
+-- canonical layout rules described in the project plan.
 cmdFmt :: Prelude.FilePath -> Prelude.IO Exit.ExitCode
-cmdFmt _ = do
-    TIO.putStrLn "fmt is not yet implemented (LANGUAGE.md section 19.7)"
-    Prelude.pure Exit.ExitSuccess
+cmdFmt path = do
+    isDir <- Dir.doesDirectoryExist path
+    if isDir
+        then formatProject path
+        else formatFile path
+
+
+formatFile :: Prelude.FilePath -> Prelude.IO Exit.ExitCode
+formatFile path = do
+    src <- TIO.readFile path
+    case Fmt.format (T.pack path) src of
+        Prelude.Left d -> do
+            emitDiagnostic HumanDiagnostics d
+            Prelude.pure (Exit.ExitFailure 1)
+        Prelude.Right out -> do
+            CMonad.when (out Prelude./= src) (TIO.writeFile path out)
+            Prelude.pure Exit.ExitSuccess
+
+
+formatProject :: Prelude.FilePath -> Prelude.IO Exit.ExitCode
+formatProject root = do
+    qFiles <- listSourceFiles (root FP.</> "src")
+    codes <- Prelude.traverse formatFile qFiles
+    Prelude.pure (combineExit codes)
+
+
+combineExit :: [Exit.ExitCode] -> Exit.ExitCode
+combineExit = Prelude.foldr step Exit.ExitSuccess
+  where
+    step Exit.ExitSuccess acc = acc
+    step e _ = e
 
 
 -- | Scaffold a new project: a quone.toml plus src/Main.Q.
@@ -193,12 +338,55 @@ cmdNew name = do
     Prelude.pure Exit.ExitSuccess
 
 
--- | REPL stub for v0.0.1 per LANGUAGE.md section 19.7.
+-- | Start an interactive REPL session.
+--
+-- Delegates to 'Quone.Repl.Driver.runRepl' which spawns a long-lived
+-- @Rscript@ subprocess and feeds it the lowering of every entered
+-- expression.
 cmdRepl :: Prelude.IO Exit.ExitCode
-cmdRepl = do
-    TIO.putStrLn "repl is not yet implemented (LANGUAGE.md section 19.7)"
-    Prelude.pure Exit.ExitSuccess
+cmdRepl = Repl.runRepl Repl.defaultOpts
 
+
+
+-- ---------------------------------------------------------------------
+-- Diagnostic emission
+-- ---------------------------------------------------------------------
+
+
+-- | Print a single diagnostic to stderr in the requested format.
+emitDiagnostic :: DiagnosticsFormat -> Diagnostic -> Prelude.IO ()
+emitDiagnostic fmt d = case fmt of
+    HumanDiagnostics -> TIO.hPutStrLn IO.stderr (render d)
+    JsonDiagnostics -> TIO.hPutStrLn IO.stderr (DiagJson.encodeDiagnostic d)
+
+
+-- | Print a list of diagnostics to stderr in the requested format.
+emitDiagnostics :: DiagnosticsFormat -> [Diagnostic] -> Prelude.IO ()
+emitDiagnostics fmt = Prelude.mapM_ (emitDiagnostic fmt)
+
+
+
+-- ---------------------------------------------------------------------
+-- Source map writer
+-- ---------------------------------------------------------------------
+
+
+writeSourceMap
+    :: Prelude.FilePath
+    -> Prelude.FilePath
+    -> Program
+    -> Text
+    -> Prelude.IO ()
+writeSourceMap srcPath outPath prog _rcode =
+    let
+        sm =
+            SourceMap
+                { smGenerated = outPath
+                , smSource = srcPath
+                , smEntries = buildSourceMap prog
+                }
+    in
+    TIO.writeFile (outPath Prelude.++ ".map") (encodeSourceMap sm)
 
 
 -- ---------------------------------------------------------------------

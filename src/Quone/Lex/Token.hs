@@ -16,6 +16,7 @@ module Quone.Lex.Token
     , Keyword (..)
     , keywordText
     , textKeyword
+    , allKeywords
     , showToken
     )
 where
@@ -210,8 +211,15 @@ keywordIndex :: Map.Map Text Keyword
 keywordIndex =
     Map.fromList
         [ (keywordText k, k)
-        | k <- [Prelude.minBound .. Prelude.maxBound]
+        | k <- allKeywords
         ]
+
+
+-- | Every reserved keyword in source order. Used by the LSP server's
+-- completion handler and any other consumer that wants to enumerate
+-- the keyword set.
+allKeywords :: [Keyword]
+allKeywords = [Prelude.minBound .. Prelude.maxBound]
 
 
 -- | One-line description used in parser error messages.

@@ -6,22 +6,35 @@
 
 ## Status
 
-| Stage                                   | Status      |
-| --------------------------------------- | ----------- |
-| Compiler library skeleton               | done        |
-| Lexer + tests                           | done        |
-| Parser + CST + tests                    | done        |
-| Desugaring + AST + validation tests     | done        |
-| Name resolution + project model         | done        |
-| Type checker (HM core)                  | done        |
-| Dataframe verb typing                   | done        |
-| R code generator + snapshot tests       | done        |
-| Package mode + roxygen2 integration     | done        |
-| CLI                                     | done        |
-| Property tests + corpus                 | done        |
-| Example projects                        | done        |
-| Elm marketing website                   | done        |
-| Final verification                      | done        |
+| Stage                                              | Status      |
+| -------------------------------------------------- | ----------- |
+| Compiler library skeleton                          | done        |
+| Lexer + tests                                      | done        |
+| Parser + CST + tests                               | done        |
+| Desugaring + AST + validation tests                | done        |
+| Name resolution + project model                    | done        |
+| Type checker (HM core)                             | done        |
+| Dataframe verb typing                              | done        |
+| R code generator + snapshot tests                  | done        |
+| Package mode + roxygen2 integration                | done        |
+| CLI                                                | done        |
+| Property tests + corpus                            | done        |
+| Example projects                                   | done        |
+| Elm marketing website                              | done        |
+| JSON diagnostics (A1)                              | done        |
+| Source maps (A2, coarse)                           | done        |
+| Programmatic CLI affordances (A3)                  | done        |
+| Real `quonec fmt` (A4)                             | done (no trivia) |
+| Real `quonec repl` (A5)                            | done        |
+| Real `quonec lsp` (A6)                             | done (placeholders) |
+| LICENSE (release C2)                               | done        |
+| NAMESPACE roxygen2 ownership (release C3)          | done        |
+| Platform asset naming (release C7)                 | done        |
+| Compiler GitHub Actions (release C8)               | done        |
+| Lexer trivia + comment-preserving fmt (release C1) | pending     |
+| Real LSP hover/definition/completion (release C4)  | pending     |
+| VS Code/Positron extension (release C5)            | pending     |
+| Final verification                                 | done        |
 
 ---
 
