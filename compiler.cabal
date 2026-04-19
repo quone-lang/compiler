@@ -1,19 +1,94 @@
 cabal-version: 3.0
 name:          compiler
 version:       0.0.0.1
+synopsis:      The Quone language compiler.
+description:
+    The Quone language compiler. Implements LANGUAGE.md v0.0.1: lexer,
+    parser, AST, name resolution, Hindley-Milner type checker, dataframe
+    verb typing, and R code generation (script and package modes).
 build-type:    Simple
 
-executable compiler
-  main-is:            main.hs
-  hs-source-dirs:     app, src
-  default-language:   Haskell2010
-  default-extensions:
-    NoImplicitPrelude
-    OverloadedStrings
-  other-modules:
-    Quone.AST.Source
-    Quone.Generate.R
+common shared
+    default-language:   Haskell2010
+    default-extensions:
+        NoImplicitPrelude
+        OverloadedStrings
+        DeriveFunctor
+        DeriveFoldable
+        DeriveTraversable
+        LambdaCase
+        ScopedTypeVariables
+        FlexibleContexts
+        TupleSections
+    ghc-options:        -Wall -Wno-unused-imports -Wno-unused-matches
 
-  build-depends:
-    , base         ^>=4.21.0.0
-    , nri-prelude  ^>=0.6.1.2
+library
+    import:           shared
+    hs-source-dirs:   src
+    exposed-modules:
+        Quone.Position
+        Quone.Diagnostic
+        Quone.Lex.Token
+        Quone.Lex.Lexer
+        Quone.Parse.Cst
+        Quone.Parse.Parser
+        Quone.Parse.Desugar
+        Quone.Ast.Source
+        Quone.Ast.Validate
+        Quone.Resolve.Project
+        Quone.Resolve.Names
+        Quone.Type.Types
+        Quone.Type.Env
+        Quone.Type.Infer
+        Quone.Type.Verb
+        Quone.Generate.Pretty
+        Quone.Generate.R
+        Quone.Generate.Module
+        Quone.Generate.Package
+        Quone.Cli.Main
+        Quone.Cli.Commands
+    build-depends:
+        , base         ^>=4.21.0.0
+        , containers
+        , directory
+        , filepath
+        , megaparsec   >= 9.0 && < 10
+        , nri-prelude  ^>=0.6.1.2
+        , parser-combinators
+        , text
+
+executable quonec
+    import:           shared
+    hs-source-dirs:   app
+    main-is:          quonec.hs
+    build-depends:
+        , base         ^>=4.21.0.0
+        , compiler
+        , nri-prelude  ^>=0.6.1.2
+
+test-suite quonec-test
+    import:           shared
+    type:             exitcode-stdio-1.0
+    hs-source-dirs:   tests
+    main-is:          Spec.hs
+    other-modules:
+        Test.Harness
+        Test.LexTests
+        Test.ParseTests
+        Test.AstTests
+        Test.ResolveTests
+        Test.TypeTests
+        Test.VerbTests
+        Test.GenerateTests
+        Test.PackageTests
+        Test.CorpusTests
+        Test.PropertyTests
+    build-depends:
+        , base         ^>=4.21.0.0
+        , compiler
+        , containers   >= 0.6 && < 0.8
+        , directory
+        , filepath
+        , nri-prelude  ^>=0.6.1.2
+        , temporary
+        , text
