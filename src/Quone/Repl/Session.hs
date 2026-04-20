@@ -133,8 +133,10 @@ reload s = do
 --
 -- Input is wrapped in @main <- ...@ so it parses as a single-file
 -- program; the resulting R is sent to the backend whose printed
--- output is returned. This is intentionally simple: a real REPL
--- chunk parser is `[planned]`.
+-- output is returned. The lowered R is a top-level assignment, which
+-- is invisible in R, so we explicitly append @main@ as a final
+-- expression to force auto-print and surface the value to the user.
+-- A proper expression-only REPL chunk parser is `[planned]`.
 evaluate
     :: Session
     -> RBackend.Backend
@@ -147,7 +149,9 @@ evaluate s backend raw = do
         Prelude.Left d ->
             Prelude.pure (s, [render d])
         Prelude.Right (typed, rcode) -> do
-            output <- RBackend.evalChunk backend rcode
+            let
+                rcodeWithEcho = rcode ++ "\nmain"
+            output <- RBackend.evalChunk backend rcodeWithEcho
             let
                 next =
                     s
