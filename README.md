@@ -64,7 +64,7 @@ Cross-cutting flags include `--diagnostics-format={human,json}`,
 
 ## Editor support
 
-A VS Code / Positron extension lives at
+A VS Code / Cursor / Positron extension lives at
 [editors/vscode/](editors/vscode/) and drives `quonec lsp`. Other
 editors can wire the LSP up directly:
 
@@ -74,7 +74,7 @@ quonec lsp     # speaks JSON-RPC 2.0 over stdin/stdout
 
 The R companion package's
 [`quone::install_lsp()`](https://github.com/quone-lang/quone) sets
-this up automatically for VS Code, Positron, RStudio, Neovim,
+this up automatically for VS Code, Cursor, Positron, RStudio, Neovim,
 Helix, and Zed.
 
 ## Repository layout

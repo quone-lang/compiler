@@ -5,5 +5,8 @@ src/**
 **/*.ts
 node_modules/**
 tsconfig.json
+esbuild.config.js
+out/**
+dist/*.vsix
 .gitignore
 .eslintrc.json

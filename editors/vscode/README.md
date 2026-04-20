@@ -1,4 +1,4 @@
-# Quone for VS Code / Positron
+# Quone for VS Code / Cursor / Positron
 
 Syntax highlighting and Language Server integration for the
 [Quone](https://github.com/quone-lang/compiler) language.
@@ -34,7 +34,7 @@ and put it on `PATH`.
 | Setting               | Default   | Description                                     |
 | --------------------- | --------- | ----------------------------------------------- |
 | `quone.compilerPath`  | `quonec`  | Absolute path to the `quonec` binary.           |
-| `quone.trace.server`  | `off`     | Trace LSP messages between VS Code and quonec.  |
+| `quone.trace.server`  | `off`     | Trace LSP messages between the editor and quonec.  |
 
 ## Building from source
 
@@ -46,11 +46,20 @@ npm run package    # produces dist/quone-0.0.1.vsix
 code --install-extension dist/quone-0.0.1.vsix
 ```
 
-## Working with Positron
+Cursor uses the same extension format:
 
-Positron uses the same extension format as VS Code. Either install
-the published `.vsix` directly or run `quone::install_lsp("positron")`
-from R.
+```sh
+cursor --install-extension dist/quone-0.0.1.vsix
+```
+
+You can also run `quone::install_lsp("cursor")` from R.
+
+## Working with Cursor and Positron
+
+Cursor and Positron use the same extension format as VS Code. Either
+install the published `.vsix` directly or run
+`quone::install_lsp("cursor")` / `quone::install_lsp("positron")` from
+R.
 
 ## License
 
