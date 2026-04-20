@@ -197,13 +197,23 @@ vocabulary is consistent with the translation in
 
 | Kind        | Type                                       | Example                                     | Compiled R                                  |
 | ----------- | ------------------------------------------ | ------------------------------------------- | ------------------------------------------- |
-| integer     | `Integer`                                  | `1`, `42`                                   | `1L`, `42L`                                 |
-| double      | `Double`                                   | `1.0`, `3.14`                               | `1.0`, `3.14`                               |
+| integer     | `Integer`                                  | `1L`, `42L`                                 | `1L`, `42L`                                 |
+| double      | `Double`                                   | `1`, `42`, `1.0`, `3.14`                    | `1.0`, `42.0`, `1.0`, `3.14`                |
 | logical     | `Logical`                                  | `True`, `False` (constructors of the built-in `Logical` custom type; see [section 7.5.1](#751-built-in-types)) | `TRUE`, `FALSE` |
 | character   | `Character`                                | `"hello"`                                   | `"hello"`                                   |
 | vector      | `Vector Double`                            | `[1.0, 2.0, 3.0]`                           | `c(1.0, 2.0, 3.0)`                          |
 | record      | `{ name : Character, score : Double }`     | `{ name = "Alice", score = 92.0 }`          | `list(name = "Alice", score = 92.0)`        |
 | data.frame  | `dataframe { name : Vector Character, score : Vector Double }` | `dataframe { name = [...], score = [...] }` | `data.frame(name = c(...), score = c(...))` |
+
+A bare digit run such as `42` is a `Double`, matching R, where the
+literal `42` produces a `numeric` value (not an integer). To write an
+`Integer` literal, append the trailing `L` suffix (`42L`), again
+following R's syntax. A literal with both a fractional part and the
+`L` suffix (`1.5L`) is a lexical error. The intent is that an author
+who does not think about types reaches for `1`, `2`, `3` and produces
+correct double arithmetic; an author who deliberately wants integer
+arithmetic writes `1L`, `2L`, `3L` and is reminded by the suffix that
+they have stepped onto the integer track.
 
 ### 3.4 Reserved keywords
 
@@ -1243,6 +1253,38 @@ introduce an Elm-style constrained variable (e.g. `number`) to overload
 arithmetic across `Integer` and `Double`; if it does, the change is
 backwards-compatible because every program that typechecks today under the
 monomorphic rule will continue to typecheck.
+
+**Defaulting unconstrained numeric operands.**
+
+Without overloading, an unannotated body such as `add a b <- a + b`
+provides no information from which the typechecker can decide whether
+`a` and `b` are `Integer` or `Double`. Rather than reject the program,
+v0.0.1 follows R's lead and *defaults* unconstrained numeric type
+variables to `Double` at the boundary of the enclosing top-level value
+declaration. The rule is:
+
+1. While inferring a value declaration's body, the typechecker tracks
+   each fresh type variable that appears as an operand of an arithmetic
+   or comparison operator.
+2. After the body is fully inferred but before the binding's principal
+   scheme is generalised, every tracked type variable that is still
+   unresolved is unified with `Double`.
+
+The defaulting decision is therefore local to one declaration and
+cannot affect inference for any other binding. Combined with the
+literal rule from [section 3.3](#33-literals) (bare digit runs are
+`Double`), this means:
+
+- `add a b <- a + b` infers `Double -> Double -> Double` and `add 1 2`
+  works.
+- `add a b <- a + b` followed by `main <- add 1L 2L` is a type error,
+  because `add` was defaulted to `Double` but `1L` and `2L` are
+  `Integer`. The author who intends integer arithmetic must annotate:
+  `add : Integer -> Integer -> Integer`.
+
+Defaulting only fires when an operand is *fully* unconstrained.
+Concrete operands always pin via the existing operator typing rules
+above, with no defaulting involved.
 
 ---
 

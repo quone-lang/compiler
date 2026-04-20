@@ -60,14 +60,34 @@ suite =
 
 literalTests :: [Test]
 literalTests =
-    [ test "lex/integer_zero_section_3_3" <|
-        Prelude.pure (firstTokens "0" === [TIntLit 0])
-    , test "lex/integer_simple_section_3_3" <|
-        Prelude.pure (firstTokens "42" === [TIntLit 42])
+    [ test "lex/bare_zero_is_double_section_3_3" <|
+        -- Per LANGUAGE.md section 3.3, bare digit runs are doubles
+        -- (matches R, where `0` is `numeric` not `integer`).
+        Prelude.pure (firstTokens "0" === [TFloatLit 0.0])
+    , test "lex/bare_integer_is_double_section_3_3" <|
+        Prelude.pure (firstTokens "42" === [TFloatLit 42.0])
+    , test "lex/integer_with_L_suffix_section_3_3" <|
+        -- Trailing `L` makes the literal an Integer, mirroring R's
+        -- `42L` syntax.
+        Prelude.pure (firstTokens "42L" === [TIntLit 42])
+    , test "lex/integer_zero_with_L_suffix_section_3_3" <|
+        Prelude.pure (firstTokens "0L" === [TIntLit 0])
     , test "lex/double_simple_section_3_3" <|
         Prelude.pure (firstTokens "3.14" === [TFloatLit 3.14])
     , test "lex/double_zero_section_3_3" <|
         Prelude.pure (firstTokens "0.0" === [TFloatLit 0.0])
+    , test "lex/double_with_L_suffix_rejected_section_3_3" <|
+        -- `1.5L` would mean "Integer with a fractional part", which
+        -- has no sensible interpretation. The lexer rejects it
+        -- rather than silently dropping the fraction.
+        Prelude.pure (assertLeft (lexInput "1.5L"))
+    , test "lex/integer_suffix_must_be_terminator_section_3_3" <|
+        -- `42Lx` is NOT an integer literal followed by an identifier;
+        -- the `L` only counts as a suffix when followed by a
+        -- non-identifier character. Two tokens should result, with
+        -- `Lx` lexed as an upper-ident because it starts with `L`.
+        Prelude.pure
+            (firstTokens "42Lx" === [TFloatLit 42.0, TUpperIdent "Lx"])
     , test "lex/character_string_section_3_3" <|
         Prelude.pure (firstTokens "\"hello\"" === [TStringLit "hello"])
     , test "lex/character_empty_string_section_3_3" <|

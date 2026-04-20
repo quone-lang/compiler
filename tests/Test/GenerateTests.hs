@@ -59,7 +59,15 @@ suite =
 primitiveTests :: [Test]
 primitiveTests =
     [ test "generate/integer_lowers_to_L_suffix_section_13_2" <|
-        compiles "x <- 42" "x <- 42L"
+        -- An Integer literal in source (`42L`) must round-trip with
+        -- the `L` suffix in the generated R, so callers of base-R
+        -- functions that distinguish int/double get the right type.
+        compiles "x <- 42L" "x <- 42L"
+    , test "generate/bare_digits_lower_to_R_double_section_13_2" <|
+        -- Bare `42` in source is a Double, and R's bare numeric is
+        -- also a double. The generator emits `42.0` so the value's
+        -- type is unambiguous to the reader.
+        compiles "x <- 42" "x <- 42.0"
     , test "generate/double_lowers_unchanged_section_13_2" <|
         compiles "x <- 3.14" "x <- 3.14"
     , test "generate/character_lowers_unchanged_section_13_2" <|
@@ -69,14 +77,14 @@ primitiveTests =
         -- exercises the True/False -> TRUE/FALSE path more directly.
         compiles "x <- True" "x <- True"
     , test "generate/vector_lowers_to_c_section_13_2" <|
-        compiles "x <- [1, 2, 3]" "x <- c(1L, 2L, 3L)"
+        compiles "x <- [1L, 2L, 3L]" "x <- c(1L, 2L, 3L)"
     , test "generate/record_lowers_to_named_list_section_13_2" <|
         compiles
-            "x <- { a = 1, b = 2 }"
+            "x <- { a = 1L, b = 2L }"
             "x <- list(a = 1L, b = 2L)"
     , test "generate/dataframe_lowers_to_data_frame_section_13_2" <|
         compiles
-            "x <- dataframe { a = [1] }"
+            "x <- dataframe { a = [1L] }"
             "x <- data.frame(a = c(1L))"
     ]
 
@@ -90,15 +98,24 @@ primitiveTests =
 operatorTests :: [Test]
 operatorTests =
     [ test "generate/plus_lowers_unchanged_section_13_2_1" <|
-        compiles "x <- 1 + 2" "x <- (1L + 2L)"
+        compiles "x <- 1L + 2L" "x <- 1L + 2L"
     , test "generate/intdiv_lowers_to_pct_div_pct_section_13_2_1" <|
-        compiles "x <- 10 // 3" "x <- (10L %/% 3L)"
+        compiles "x <- 10L // 3L" "x <- 10L %/% 3L"
     , test "generate/mod_lowers_to_pct_pct_section_13_2_1" <|
-        compiles "x <- 10 % 3" "x <- (10L %% 3L)"
+        compiles "x <- 10L % 3L" "x <- 10L %% 3L"
     , test "generate/exp_lowers_to_caret_section_13_2_1" <|
-        compiles "x <- 2.0 ^ 3.0" "x <- (2.0 ^ 3.0)"
+        compiles "x <- 2.0 ^ 3.0" "x <- 2.0 ^ 3.0"
     , test "generate/comparison_lowers_unchanged_section_13_2_1" <|
-        compiles "x <- 1 == 2" "x <- (1L == 2L)"
+        compiles "x <- 1L == 2L" "x <- 1L == 2L"
+    , test "generate/precedence_omits_redundant_parens_section_13_2_1" <|
+        compiles "x <- 1L + 2L * 3L" "x <- 1L + 2L * 3L"
+    , test "generate/precedence_keeps_required_parens_section_13_2_1" <|
+        compiles "x <- (1L + 2L) * 3L" "x <- (1L + 2L) * 3L"
+    , test "generate/negative_base_of_exponent_is_parenthesized_section_13_2_1" <|
+        -- `-2.0 ^ 3.0` (bare digits) is fine for `^` since `^`
+        -- requires Double anyway. Pin both sides to Double so the
+        -- test is about parenthesization, not the type-check rule.
+        compiles "x <- -2.0 ^ 3.0" "x <- (-2.0) ^ 3.0"
     , test "generate/pipe_lowers_to_native_pipe_section_13_4" <|
         compiles "x <- xs |> f" "x <- xs |> f"
     , test "generate/field_access_lowers_to_dollar_section_13_7" <|
@@ -117,11 +134,11 @@ functionTests =
     [ test "generate/curried_def_to_multi_arg_R_function_section_13_3" <|
         compiles
             "add a b <- a + b"
-            "add <- function(a, b) { (a + b) }"
+            "add <- function(a, b) { a + b }"
     , test "generate/fully_applied_call_to_single_R_call_section_13_3" <|
-        compiles "x <- add 1 2" "x <- add(1L, 2L)"
+        compiles "x <- add 1L 2L" "x <- add(1L, 2L)"
     , test "generate/lambda_to_anonymous_function_section_13_3" <|
-        compiles "x <- \\a -> a + 1" "x <- function(a) (a + 1L)"
+        compiles "x <- \\a -> a + 1L" "x <- function(a) a + 1L"
     ]
 
 
@@ -135,7 +152,7 @@ recordTests :: [Test]
 recordTests =
     [ test "generate/record_update_lowers_to_list_modify_section_13_7" <|
         compiles
-            "x <- { rec | a = 2 }"
+            "x <- { rec | a = 2L }"
             "x <- purrr::list_modify(rec, a = 2L)"
     ]
 
@@ -173,16 +190,16 @@ verbTests :: [Test]
 verbTests =
     [ test "generate/filter_in_pipe_to_dplyr_filter_section_13_8" <|
         compiles
-            "y <- xs |> filter (a > 0)"
-            "y <- xs |> dplyr::filter((a > 0L))"
+            "y <- xs |> filter (a > 0L)"
+            "y <- xs |> dplyr::filter(a > 0L)"
     , test "generate/select_in_pipe_to_dplyr_select_section_13_8" <|
         compiles
             "y <- xs |> select { a }"
             "y <- xs |> dplyr::select(a = a)"
     , test "generate/mutate_in_pipe_to_dplyr_mutate_section_13_8" <|
         compiles
-            "y <- xs |> mutate { b = a + 1 }"
-            "y <- xs |> dplyr::mutate(b = (a + 1L))"
+            "y <- xs |> mutate { b = a + 1L }"
+            "y <- xs |> dplyr::mutate(b = a + 1L)"
     , test "generate/arrange_with_desc_to_dplyr_desc_section_13_8" <|
         compiles
             "y <- xs |> arrange (desc score)"
@@ -202,14 +219,14 @@ caseTests =
         -- `if c then a else b` desugars to case on Logical and the
         -- generator's optimisation lowers it to R's native if.
         compiles
-            "x <- if cond then 1 else 2"
+            "x <- if cond then 1L else 2L"
             "x <- if (cond) 1L else 2L"
     , test "generate/case_on_logical_with_swapped_arms_section_13_6" <|
         compiles
             ( T.unlines
                 [ "x <- case cond of"
-                , "    False -> 0"
-                , "    True -> 1"
+                , "    False -> 0L"
+                , "    True -> 1L"
                 ]
             )
             "x <- if (cond) 1L else 0L"

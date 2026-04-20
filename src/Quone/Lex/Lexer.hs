@@ -317,8 +317,22 @@ stringLiteral filename =
         Prelude.pure (TStringLit body)
 
 
--- | Integer or double literal. A trailing @.@ followed by a digit makes
--- it a double; otherwise it is an integer.
+-- | Numeric literal. Per LANGUAGE.md section 3.3, Quone follows R's
+-- convention:
+--
+-- * @1@      lexes as 'TFloatLit' (Double). Bare digit runs are doubles
+--            because R's bare numerics are doubles -- this is the
+--            language default and makes pipeline-style data-analysis
+--            code read naturally.
+-- * @1.5@    lexes as 'TFloatLit' (Double).
+-- * @1L@     lexes as 'TIntLit' (Integer). The trailing @L@ is the
+--            integer suffix borrowed from R; an Integer literal must
+--            be written this way.
+-- * @1.5L@   is rejected: a literal with a fractional part cannot be
+--            an integer.
+--
+-- The @L@ must be immediately followed by a non-identifier character
+-- so we don't confuse @1Lx@ for an integer suffix on @1@.
 numericLiteral :: Text -> Lexer (Located Token)
 numericLiteral filename =
     located filename <| do
@@ -332,12 +346,31 @@ numericLiteral filename =
                         Prelude.pure ("." Prelude.<> frac)
                     )
                 )
-        case mFrac of
-            Just frac ->
+        mIntSuffix <-
+            P.optional
+                (P.try
+                    (PC.char 'L' <* P.notFollowedBy
+                        (P.satisfy isIdentCont)))
+        case (mFrac, mIntSuffix) of
+            (Just _, Just _) ->
+                P.fancyFailure
+                    (Set.singleton
+                        (P.ErrorFail
+                            "an integer literal (suffix `L`) cannot have a fractional part"))
+            (Just frac, Nothing) ->
                 Prelude.pure
-                    (TFloatLit (Prelude.read (T.unpack (intPart Prelude.<> frac)) :: Prelude.Double))
-            Nothing ->
-                Prelude.pure (TIntLit (Prelude.read (T.unpack intPart) :: Int))
+                    (TFloatLit
+                        (Prelude.read
+                            (T.unpack (intPart Prelude.<> frac))
+                            :: Prelude.Double))
+            (Nothing, Just _) ->
+                Prelude.pure
+                    (TIntLit (Prelude.read (T.unpack intPart) :: Int))
+            (Nothing, Nothing) ->
+                Prelude.pure
+                    (TFloatLit
+                        (Prelude.read (T.unpack intPart)
+                            :: Prelude.Double))
 
 
 

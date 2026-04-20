@@ -168,7 +168,7 @@ fixtureState =
             State.Document
                 { State.docText =
                     T.intercalate "\n"
-                        [ "x <- 1"
+                        [ "x <- 1L"
                         , "y <- 2.0"
                         , "main <- x"
                         ]

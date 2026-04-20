@@ -53,7 +53,11 @@ suite =
 literalTests :: [Test]
 literalTests =
     [ test "type/literal_integer_section_3_3" <|
-        infersTo "x <- 42" "x" "Integer"
+        -- Per LANGUAGE.md section 3.3, an Integer literal MUST carry
+        -- the trailing `L` suffix; bare `42` is a Double.
+        infersTo "x <- 42L" "x" "Integer"
+    , test "type/literal_bare_digits_default_to_double_section_3_3" <|
+        infersTo "x <- 42" "x" "Double"
     , test "type/literal_double_section_3_3" <|
         infersTo "x <- 3.14" "x" "Double"
     , test "type/literal_character_section_3_3" <|
@@ -84,7 +88,7 @@ varAndAppTests =
                 Nothing -> Prelude.pure (Fail "no binding for id")
             Prelude.Left d -> Prelude.pure (Fail (T.pack (Prelude.show d)))
     , test "type/curried_application_section_8_1" <|
-        infersTo "x <- (\\a b -> a) 1 2" "x" "Integer"
+        infersTo "x <- (\\a b -> a) 1L 2L" "x" "Integer"
     , test "type/unbound_variable_rejected_section_12_1" <|
         Prelude.pure (assertLeft (infer "x <- y"))
     , test "type/let_generalisation_section_8_3" <|
@@ -93,7 +97,7 @@ varAndAppTests =
         -- to two different concrete types via two top-level uses.
         case infer
             ( T.unlines
-                [ "first <- (let f <- \\x -> x in f 1)"
+                [ "first <- (let f <- \\x -> x in f 1L)"
                 , "second <- (let f <- \\x -> x in f \"hi\")"
                 ]
             ) of
@@ -111,31 +115,50 @@ varAndAppTests =
 operatorTests :: [Test]
 operatorTests =
     [ test "type/op_add_int_int_int_section_8_8" <|
-        infersTo "x <- 1 + 2" "x" "Integer"
+        infersTo "x <- 1L + 2L" "x" "Integer"
+    , test "type/op_add_bare_digits_default_to_double_section_8_8" <|
+        -- Bare `1 + 2` is `Double + Double = Double` because bare
+        -- digit literals are doubles.
+        infersTo "x <- 1 + 2" "x" "Double"
     , test "type/op_add_dbl_dbl_dbl_section_8_8" <|
         infersTo "x <- 1.0 + 2.0" "x" "Double"
     , test "type/op_mixed_int_dbl_rejected_section_8_8" <|
-        Prelude.pure (assertLeft (infer "x <- 1 + 2.0"))
+        -- `1L` is Integer, `2.0` is Double - mixed primitives still
+        -- a type error (no implicit coercion).
+        Prelude.pure (assertLeft (infer "x <- 1L + 2.0"))
     , test "type/op_intdiv_int_only_section_8_8" <|
-        infersTo "x <- 10 // 3" "x" "Integer"
+        infersTo "x <- 10L // 3L" "x" "Integer"
     , test "type/op_intdiv_double_rejected_section_8_8" <|
         Prelude.pure (assertLeft (infer "x <- 10.0 // 3.0"))
     , test "type/op_mod_int_only_section_8_8" <|
-        infersTo "x <- 10 % 3" "x" "Integer"
+        infersTo "x <- 10L % 3L" "x" "Integer"
     , test "type/op_caret_double_only_section_8_8" <|
         infersTo "x <- 2.0 ^ 3.0" "x" "Double"
     , test "type/op_caret_int_rejected_section_8_8" <|
-        Prelude.pure (assertLeft (infer "x <- 2 ^ 3"))
+        -- `2L ^ 3L` is Integer ^ Integer; `^` requires both sides to
+        -- be Double, so this is rejected.
+        Prelude.pure (assertLeft (infer "x <- 2L ^ 3L"))
     , test "type/op_unary_neg_int_section_8_8" <|
-        infersTo "x <- -5" "x" "Integer"
+        infersTo "x <- -5L" "x" "Integer"
     , test "type/op_unary_neg_double_section_8_8" <|
         infersTo "x <- -5.0" "x" "Double"
     , test "type/op_eq_returns_logical_section_8_8" <|
-        infersTo "x <- 1 == 2" "x" "Logical"
+        infersTo "x <- 1L == 2L" "x" "Logical"
     , test "type/op_lt_mixed_rejected_section_8_8" <|
-        Prelude.pure (assertLeft (infer "x <- 1 < 2.0"))
+        Prelude.pure (assertLeft (infer "x <- 1L < 2.0"))
     , test "type/op_eq_string_returns_logical_section_8_8" <|
         infersTo "x <- \"a\" == \"b\"" "x" "Logical"
+      -- Numeric defaulting (LANGUAGE.md section 8.8): an unannotated
+      -- top-level binding whose body uses arithmetic on unconstrained
+      -- operands has those operands defaulted to Double, matching R's
+      -- bare-numeric default. This is what makes the natural shape
+      -- @add a b <- a + b@ usable without an annotation.
+    , test "type/op_unconstrained_add_defaults_to_double_section_8_8" <|
+        infersTo "add a b <- a + b" "add" "Double -> Double -> Double"
+    , test "type/op_unconstrained_compare_defaults_to_double_section_8_8" <|
+        infersTo "ge a b <- a >= b" "ge" "Double -> Double -> Logical"
+    , test "type/op_unconstrained_caret_defaults_to_double_section_8_8" <|
+        infersTo "square x <- x ^ x" "square" "Double -> Double"
     ]
 
 
@@ -150,8 +173,8 @@ caseTests =
     [ test "type/case_wildcard_section_8_4" <|
         infersTo
             ( T.unlines
-                [ "x <- case 1 of"
-                , "    _ -> 42"
+                [ "x <- case 1L of"
+                , "    _ -> 42L"
                 ]
             )
             "x"
@@ -159,9 +182,9 @@ caseTests =
     , test "type/case_constructor_section_8_4" <|
         infersTo
             ( T.unlines
-                [ "x <- case Just 1 of"
+                [ "x <- case Just 1L of"
                 , "    Just n -> n"
-                , "    Nothing -> 0"
+                , "    Nothing -> 0L"
                 ]
             )
             "x"
@@ -171,15 +194,15 @@ caseTests =
             ( assertLeft
                 ( infer
                     ( T.unlines
-                        [ "x <- case 1 of"
-                        , "    1 -> 1"
+                        [ "x <- case 1L of"
+                        , "    1L -> 1L"
                         , "    _ -> \"oops\""
                         ]
                     )
                 )
             )
     , test "type/if_desugared_to_case_typed_section_5_3" <|
-        infersTo "x <- if True then 1 else 2" "x" "Integer"
+        infersTo "x <- if True then 1L else 2L" "x" "Integer"
     ]
 
 
@@ -193,23 +216,23 @@ recordTests :: [Test]
 recordTests =
     [ test "type/record_field_access_section_8_5" <|
         infersTo
-            "x <- { a = 1 }.a"
+            "x <- { a = 1L }.a"
             "x"
             "Integer"
     , test "type/record_unknown_field_rejected_section_8_5" <|
         Prelude.pure
             ( assertLeft
-                (infer "x <- { a = 1 }.b")
+                (infer "x <- { a = 1L }.b")
             )
     , test "type/record_update_section_8_5" <|
         infersTo
-            "x <- { { a = 1 } | a = 2 }"
+            "x <- { { a = 1L } | a = 2L }"
             "x"
             "{ a : Integer }"
     , test "type/record_update_wrong_field_rejected_section_8_5" <|
         Prelude.pure
             ( assertLeft
-                (infer "x <- { { a = 1 } | b = 2 }")
+                (infer "x <- { { a = 1L } | b = 2L }")
             )
     ]
 
@@ -226,7 +249,7 @@ annotationTests =
         case infer
             ( T.unlines
                 [ "x : Integer"
-                , "x <- 1"
+                , "x <- 1L"
                 ]
             ) of
             Prelude.Right _ -> Prelude.pure Pass

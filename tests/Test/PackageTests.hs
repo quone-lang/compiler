@@ -92,7 +92,7 @@ moduleArtifactTests =
             ( T.unlines
                 [ "module Foo exporting (x)"
                 , ""
-                , "x <- 1"
+                , "x <- 1L"
                 ]
             ) of
             Prelude.Right p ->

@@ -387,12 +387,23 @@ precedenceTests =
 literalTests :: [Test]
 literalTests =
     [ test "parse/literal_integer_section_5_1" <|
-        case parseProgram "x <- 42" of
+        -- Per LANGUAGE.md section 3.3, an Integer literal MUST carry
+        -- the trailing `L` suffix; a bare `42` is a Double.
+        case parseProgram "x <- 42L" of
             Prelude.Right (CProgram {programDecls = [CDValue v]}) ->
                 Prelude.pure
                     ( case valueDeclBody v of
                         CELit _ (CLInt 42) -> Pass
                         _ -> Fail "expected CLInt 42"
+                    )
+            other -> Prelude.pure (Fail (T.pack (Prelude.show other)))
+    , test "parse/literal_bare_digits_is_double_section_5_1" <|
+        case parseProgram "x <- 42" of
+            Prelude.Right (CProgram {programDecls = [CDValue v]}) ->
+                Prelude.pure
+                    ( case valueDeclBody v of
+                        CELit _ (CLDouble _) -> Pass
+                        _ -> Fail "expected CLDouble for bare 42"
                     )
             other -> Prelude.pure (Fail (T.pack (Prelude.show other)))
     , test "parse/literal_double_section_5_1" <|

@@ -99,6 +99,12 @@ data InferResult a
 data InferState = InferState
     { isNextVar :: Int
     , isSubst :: Subst
+    -- | Type variables that appeared as a numeric operand somewhere
+    -- and were not yet pinned to a concrete ground type. After a
+    -- value declaration is fully inferred, 'defaultPendingNumerics'
+    -- defaults any of these that are still free to 'Double',
+    -- matching R's bare-numeric default. Cleared between decls.
+    , isNumericVars :: Set.Set TyVar
     }
 
 
@@ -126,7 +132,13 @@ instance Prelude.Monad Infer where
 -- | Run an Infer action. Returns either a diagnostic or the value.
 runInfer :: Infer a -> Prelude.Either Diagnostic a
 runInfer (Infer run) =
-    case run (InferState {isNextVar = 1000, isSubst = emptySubst}) of
+    case run
+        ( InferState
+            { isNextVar = 1000
+            , isSubst = emptySubst
+            , isNumericVars = Set.empty
+            }
+        ) of
         IOk a _ -> Prelude.Right a
         IErr d -> Prelude.Left d
 
@@ -161,6 +173,42 @@ freshVar hint = Infer <| \s ->
     IOk
         (TyVarT (TyVar nextId hint))
         (s {isNextVar = nextId Prelude.+ 1})
+
+
+-- | Record that an operand of an arithmetic / comparison operator
+-- was a type variable. After a value declaration finishes inferring,
+-- 'defaultPendingNumerics' rewrites any of these that are still
+-- unresolved to 'Double'. Concrete (non-variable) operands are
+-- ignored.
+markNumeric :: Type -> Infer ()
+markNumeric = \case
+    TyVarT v -> Infer (\s ->
+        IOk () (s {isNumericVars = Set.insert v (isNumericVars s)}))
+    _ -> Prelude.pure ()
+
+
+-- | Default every still-unresolved numeric type variable accumulated
+-- during the current declaration to 'Double', then clear the set.
+--
+-- Per LANGUAGE.md section 8.8, R's bare numeric default is double;
+-- a Quone author who wants integer arithmetic must either annotate
+-- the binding or use the @L@ literal suffix. This rule runs at the
+-- decl boundary so the defaulting decision is local: it cannot
+-- affect inference for any binding other than the one currently
+-- being checked.
+defaultPendingNumerics :: Infer ()
+defaultPendingNumerics = do
+    sub <- getSubst
+    pending <- Infer (\s -> IOk (isNumericVars s) s)
+    Prelude.mapM_
+        (\v ->
+            case applySubst sub (TyVarT v) of
+                TyVarT _ -> do
+                    _ <- unifyAt emptySpan (TyVarT v) primDouble
+                    Prelude.pure ()
+                _ -> Prelude.pure ())
+        (Set.toList pending)
+    Infer (\s -> IOk () (s {isNumericVars = Set.empty}))
 
 
 
@@ -347,6 +395,11 @@ typecheckOne holes env decl = case decl of
                 _ <- unifyAt (valueDeclSpan v) placeholder bodyTy
                 Prelude.pure ()
             Nothing -> Prelude.pure ()
+        -- Resolve any unconstrained numeric type variables that
+        -- accumulated during this decl's binop inference. Must run
+        -- BEFORE generalization so defaulted vars aren't quantified
+        -- into the binding's scheme.
+        defaultPendingNumerics
         sub <- getSubst
         let
             finalTy = applySubst sub bodyTy
@@ -686,6 +739,17 @@ sameNumeric sp l r =
         (TyCon "Double", TyVarT _) -> do
             _ <- unifyAt sp r primDouble
             Prelude.pure primDouble
+        -- Both sides are still unconstrained type variables. Unify
+        -- them so the result type follows the operands, register
+        -- both as numeric-pending, and let 'defaultPendingNumerics'
+        -- pick 'Double' at the decl boundary. This is what makes
+        -- @add a b <- a + b@ infer @Double -> Double -> Double@
+        -- without requiring an annotation.
+        (TyVarT _, TyVarT _) -> do
+            _ <- unifyAt sp l r
+            markNumeric l
+            markNumeric r
+            Prelude.pure l
         _ ->
             inferFail
                 ( typeMismatchDiag sp
@@ -699,9 +763,23 @@ sameNumeric sp l r =
 
 bothInt :: SourceSpan -> Type -> Type -> Infer Type
 bothInt sp l r =
-    if l Prelude.== primInteger Prelude.&& r Prelude.== primInteger
-        then Prelude.pure primInteger
-        else
+    case (l, r) of
+        _ | l Prelude.== primInteger Prelude.&& r Prelude.== primInteger ->
+            Prelude.pure primInteger
+        -- The result type is fixed at Integer, so any unconstrained
+        -- operand can be unified directly with Integer. No defaulting
+        -- is needed since the operator itself pins both sides.
+        (TyVarT _, _) | r Prelude.== primInteger -> do
+            _ <- unifyAt sp l primInteger
+            Prelude.pure primInteger
+        (_, TyVarT _) | l Prelude.== primInteger -> do
+            _ <- unifyAt sp r primInteger
+            Prelude.pure primInteger
+        (TyVarT _, TyVarT _) -> do
+            _ <- unifyAt sp l primInteger
+            _ <- unifyAt sp r primInteger
+            Prelude.pure primInteger
+        _ ->
             inferFail
                 ( typeMismatchDiag sp
                     ( "// and % require both operands to be Integer; got "
@@ -714,9 +792,20 @@ bothInt sp l r =
 
 bothDouble :: SourceSpan -> Type -> Type -> Infer Type
 bothDouble sp l r =
-    if l Prelude.== primDouble Prelude.&& r Prelude.== primDouble
-        then Prelude.pure primDouble
-        else
+    case (l, r) of
+        _ | l Prelude.== primDouble Prelude.&& r Prelude.== primDouble ->
+            Prelude.pure primDouble
+        (TyVarT _, _) | r Prelude.== primDouble -> do
+            _ <- unifyAt sp l primDouble
+            Prelude.pure primDouble
+        (_, TyVarT _) | l Prelude.== primDouble -> do
+            _ <- unifyAt sp r primDouble
+            Prelude.pure primDouble
+        (TyVarT _, TyVarT _) -> do
+            _ <- unifyAt sp l primDouble
+            _ <- unifyAt sp r primDouble
+            Prelude.pure primDouble
+        _ ->
             inferFail
                 ( typeMismatchDiag sp
                     ( "^ requires both operands to be Double; got "
@@ -729,9 +818,25 @@ bothDouble sp l r =
 
 comparison :: SourceSpan -> Type -> Type -> Infer Type
 comparison sp l r =
-    if l Prelude.== r Prelude.&& isPrimComparable l
-        then Prelude.pure primLogical
-        else
+    case (l, r) of
+        _ | l Prelude.== r Prelude.&& isPrimComparable l ->
+            Prelude.pure primLogical
+        -- One side concrete and primitive-comparable: pin the other.
+        (TyVarT _, _) | isPrimComparable r -> do
+            _ <- unifyAt sp l r
+            Prelude.pure primLogical
+        (_, TyVarT _) | isPrimComparable l -> do
+            _ <- unifyAt sp r l
+            Prelude.pure primLogical
+        -- Both unconstrained: unify them so the result is consistent,
+        -- mark both as numeric-pending so the decl-boundary defaulting
+        -- step pins them to Double if nothing else has done so.
+        (TyVarT _, TyVarT _) -> do
+            _ <- unifyAt sp l r
+            markNumeric l
+            markNumeric r
+            Prelude.pure primLogical
+        _ ->
             inferFail
                 ( typeMismatchDiag sp
                     ( "comparison requires both operands to be the same primitive comparable type; got "

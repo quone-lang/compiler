@@ -7,10 +7,13 @@
 #'   - unary minus on a literal
 #'   - multiple top-level bindings interleaved
 #'   - the final `main` binding being a Double, not a dataframe
+#'
+#' Per LANGUAGE.md section 3.3, an Integer literal MUST carry the
+#' trailing `L` suffix; bare `99` is a Double.
 
 cents : Integer
 cents <-
-  99 * 3 + 50
+  99L * 3L + 50L
 
 dollars : Double
 dollars <-
