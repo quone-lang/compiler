@@ -22,6 +22,7 @@ import qualified Test.ParseTests
 import qualified Test.PropertyTests
 import qualified Test.ReplTests
 import qualified Test.ResolveTests
+import qualified Test.ScenarioTests
 import qualified Test.SourceMapTests
 import qualified Test.TypeTests
 import qualified Test.VerbTests
@@ -41,6 +42,7 @@ main =
         , Test.PackageTests.suite
         , Test.PropertyTests.suite
         , Test.CorpusTests.suite
+        , Test.ScenarioTests.suite
         , Test.JsonDiagnosticTests.suite
         , Test.SourceMapTests.suite
         , Test.FormatTests.suite

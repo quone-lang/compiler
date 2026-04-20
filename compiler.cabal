@@ -108,7 +108,9 @@ test-suite quonec-test
         Test.JsonDiagnosticTests
         Test.SourceMapTests
         Test.FormatTests
+        Test.FormatSnapshotTests
         Test.ReplTests
+        Test.ScenarioTests
         Test.LspTests
         Test.CliTests
     build-depends:
@@ -119,5 +121,6 @@ test-suite quonec-test
         , directory
         , filepath
         , nri-prelude  ^>=0.6.1.2
+        , process
         , temporary
         , text

@@ -1,0 +1,5 @@
+# A tibble: 2 × 3
+  arm       n mean_bmi
+  <chr> <int>    <dbl>
+1 A         3     26.0
+2 B         2     26.3

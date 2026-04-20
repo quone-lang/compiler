@@ -224,21 +224,15 @@ generateExprIn env = \case
         case head_ of
             EVar n -> callR (resolvedName env n) (Prelude.fmap (generateExprIn env) args)
             ECon n -> callR (upperText n) (Prelude.fmap (generateExprIn env) args)
-            _ -> callR (generateExprIn env head_) (Prelude.fmap (generateExprIn env) args)
+            _ -> callR (renderCallHead env head_) (Prelude.fmap (generateExprIn env) args)
     EBinOp _ op l r ->
-        parens
-            ( generateExprIn env l
-                Prelude.<> " "
-                Prelude.<> binOpR op
-                Prelude.<> " "
-                Prelude.<> generateExprIn env r
-            )
+        renderBinary env op l r
     EUnary _ OpNeg e ->
-        "-" Prelude.<> generateExprIn env e
+        "-" Prelude.<> renderUnaryOperand env e
     EPipe _ lhs rhs ->
-        generateExprIn env lhs Prelude.<> " |> " Prelude.<> generatePipeRhs env rhs
+        renderPipeLhs env lhs Prelude.<> " |> " Prelude.<> generatePipeRhs env rhs
     EField _ record fname ->
-        generateExprIn env record Prelude.<> "$" Prelude.<> lowerText fname
+        renderFieldBase env record Prelude.<> "$" Prelude.<> lowerText fname
     ERecord _ fields ->
         listCall env fields
     ERecordUpdate _ target fields ->
@@ -317,6 +311,168 @@ binOpR = \case
     OpLt -> "<"
     OpGe -> ">="
     OpLe -> "<="
+
+
+data Assoc
+    = AssocLeft
+    | AssocRight
+    deriving (Prelude.Show, Prelude.Eq)
+
+
+data BinSide
+    = BinLeft
+    | BinRight
+    deriving (Prelude.Show, Prelude.Eq)
+
+
+renderBinary :: GenEnv -> BinOp -> Expr -> Expr -> Text
+renderBinary env op l r =
+    renderBinaryOperand env op BinLeft l
+        Prelude.<> " "
+        Prelude.<> binOpR op
+        Prelude.<> " "
+        Prelude.<> renderBinaryOperand env op BinRight r
+
+
+renderBinaryOperand :: GenEnv -> BinOp -> BinSide -> Expr -> Text
+renderBinaryOperand env parentOp side child =
+    parenthesizeIf
+        (needsParensInBinary parentOp side child)
+        (generateExprIn env child)
+
+
+renderUnaryOperand :: GenEnv -> Expr -> Text
+renderUnaryOperand env child =
+    parenthesizeIf
+        (exprPrecedence child Prelude.<= unaryPrecedence)
+        (generateExprIn env child)
+
+
+renderCallHead :: GenEnv -> Expr -> Text
+renderCallHead env head_ =
+    parenthesizeIf
+        (exprPrecedence head_ Prelude.< callPrecedence)
+        (generateExprIn env head_)
+
+
+renderFieldBase :: GenEnv -> Expr -> Text
+renderFieldBase env base =
+    parenthesizeIf
+        (exprPrecedence base Prelude.< fieldPrecedence)
+        (generateExprIn env base)
+
+
+renderPipeLhs :: GenEnv -> Expr -> Text
+renderPipeLhs env lhs =
+    parenthesizeIf
+        (exprPrecedence lhs Prelude.< pipePrecedence)
+        (generateExprIn env lhs)
+
+
+parenthesizeIf :: Prelude.Bool -> Text -> Text
+parenthesizeIf needs t =
+    if needs
+        then parens t
+        else t
+
+
+needsParensInBinary :: BinOp -> BinSide -> Expr -> Prelude.Bool
+needsParensInBinary parentOp side = \case
+    EBinOp _ childOp _ _ ->
+        case Prelude.compare
+            (binOpPrecedence childOp)
+            (binOpPrecedence parentOp) of
+            Prelude.LT -> Prelude.True
+            Prelude.GT -> Prelude.False
+            Prelude.EQ ->
+                case binOpAssoc parentOp of
+                    AssocLeft -> side Prelude.== BinRight
+                    AssocRight -> side Prelude.== BinLeft
+    other ->
+        exprPrecedence other Prelude.< binOpPrecedence parentOp
+
+
+exprPrecedence :: Expr -> Prelude.Int
+exprPrecedence = \case
+    ELambda _ _ _ -> statementPrecedence
+    ECase _ _ _ -> statementPrecedence
+    ELet _ _ _ -> statementPrecedence
+    EPipe _ _ _ -> pipePrecedence
+    EBinOp _ op _ _ -> binOpPrecedence op
+    EUnary _ _ _ -> unaryPrecedence
+    EApp _ _ _ -> callPrecedence
+    EField _ _ _ -> fieldPrecedence
+    ERecord _ _ -> callPrecedence
+    ERecordUpdate _ _ _ -> callPrecedence
+    EVector _ _ -> callPrecedence
+    EDataframe _ _ -> callPrecedence
+    EVerb _ _ _ -> callPrecedence
+    ELit _ _ -> atomPrecedence
+    EVar _ -> atomPrecedence
+    ECon _ -> atomPrecedence
+
+
+binOpPrecedence :: BinOp -> Prelude.Int
+binOpPrecedence = \case
+    OpEq -> comparePrecedence
+    OpNeq -> comparePrecedence
+    OpGt -> comparePrecedence
+    OpLt -> comparePrecedence
+    OpGe -> comparePrecedence
+    OpLe -> comparePrecedence
+    OpAdd -> addPrecedence
+    OpSub -> addPrecedence
+    OpMul -> multiplyPrecedence
+    OpDiv -> multiplyPrecedence
+    OpIntDiv -> multiplyPrecedence
+    OpMod -> multiplyPrecedence
+    OpExp -> exponentPrecedence
+
+
+binOpAssoc :: BinOp -> Assoc
+binOpAssoc = \case
+    OpExp -> AssocRight
+    _ -> AssocLeft
+
+
+statementPrecedence :: Prelude.Int
+statementPrecedence = 0
+
+
+pipePrecedence :: Prelude.Int
+pipePrecedence = 10
+
+
+comparePrecedence :: Prelude.Int
+comparePrecedence = 20
+
+
+addPrecedence :: Prelude.Int
+addPrecedence = 30
+
+
+multiplyPrecedence :: Prelude.Int
+multiplyPrecedence = 40
+
+
+unaryPrecedence :: Prelude.Int
+unaryPrecedence = 50
+
+
+exponentPrecedence :: Prelude.Int
+exponentPrecedence = 60
+
+
+callPrecedence :: Prelude.Int
+callPrecedence = 70
+
+
+fieldPrecedence :: Prelude.Int
+fieldPrecedence = callPrecedence
+
+
+atomPrecedence :: Prelude.Int
+atomPrecedence = 90
 
 
 -- | Walk a left-folded EApp chain and return @(head, args)@.

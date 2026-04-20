@@ -1,1 +1,1 @@
-main <- (1L + 1L)
+main <- 1L + 1L
