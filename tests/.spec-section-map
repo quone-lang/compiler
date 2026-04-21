@@ -1,0 +1,20 @@
+# Map fixture directories to spec sections.
+#
+# Format: <dir-relative-to-compiler-root>     <spec-section-tag>
+#
+# The sync-test-links.sh script reads this file to know which spec
+# subsection's <!-- BEGIN tests:X.Y --> ... <!-- END tests:X.Y --> block
+# should list the runtime-discovered tests for a fixture directory.
+#
+# Section tags use the form FILE-SLUG:SECTION_TAG when the section is in a
+# doc other than LANGUAGE.md. e.g. "format-snapshot" lives in FORMATTER.md
+# under <!-- BEGIN tests:format-snapshot -->. A bare tag like "16.7" lives
+# in LANGUAGE.md.
+#
+# Lines starting with `#` and blank lines are ignored.
+
+tests/scenarios            16.8
+tests/format               format-snapshot
+tests/corpus/valid         16.10
+tests/corpus/invalid       16.10
+tests/corpus/snapshot      16.10

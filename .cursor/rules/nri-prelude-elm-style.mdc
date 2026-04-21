@@ -12,3 +12,162 @@ alwaysApply: true
 - Model domain failures with custom types and `Result` values instead of exceptions when practical.
 - Keep formatting Elm-like: 4-space indentation, leading commas in multiline lists/imports/exports, and an 80-column target via `.fourmolu.yaml`.
 - Preserve this style in code, examples, docs, and build config unless the user explicitly asks to change it.
+
+## Module-header import shape
+
+Every module starts with the same three-line prelude block:
+
+```haskell
+import qualified Data.Text as T   -- only if Text appears qualified
+import NriPrelude
+import qualified Prelude
+```
+
+`import qualified Prelude` is load-bearing - many base names that
+`NriPrelude` does not re-export are reached via `Prelude.X`. Do NOT
+delete that line when editing a module.
+
+## What `NriPrelude` re-exports (so you don't qualify it)
+
+| Available bare from `NriPrelude` | Notes |
+|---|---|
+| `Bool`, `Maybe (..)`, `Result (..)`, `Char`, `Text`, `List` | types |
+| `True`, `False`, `Just`, `Nothing`, `Ok`, `Err` | constructors |
+| `Show`, `Eq`, `Ord`, `Num`, `Generic` | classes |
+| `LT`, `GT`, `EQ`, `Ordering` | comparison |
+| `Int`, `Float`, `Order` | numeric types - see `Int` warning below |
+| `+ - * / // ^`, `== /=`, `< > <= >=`, `&& ||`, `++` | operators |
+| `<\|`, `\|>`, `<<`, `>>` | application + composition (Elm style) |
+| `<*>`, `>>=`, `fmap` | applicative / monad / functor essentials |
+| `not`, `negate`, `abs`, `compare`, `max`, `min` | base helpers |
+| `truncate`, `round`, `floor`, `ceiling`, `toFloat` | numeric conversions |
+| `identity`, `always`, `xor`, `modBy`, `remainderBy`, `clamp` | Elm-flavour |
+| `pi`, `sqrt`, `logBase`, trig functions | math |
+
+## What you must reach via `Prelude.X` (NriPrelude does NOT re-export)
+
+| Qualified | Why |
+|---|---|
+| `Prelude.IO`, `Prelude.FilePath`, `Prelude.String` | not in NriPrelude |
+| `Prelude.Either`, `Prelude.Left`, `Prelude.Right` | NriPrelude prefers `Result` |
+| `Prelude.Functor`, `Prelude.Applicative`, `Prelude.Monad` | classes not re-exported |
+| `Prelude.Bounded`, `Prelude.Enum` | classes not re-exported |
+| `Prelude.Integer`, `Prelude.Double` | types not re-exported (see warning) |
+| `Prelude.pure`, `Prelude.show`, `Prelude.read` | not re-exported |
+| `Prelude.length`, `Prelude.null`, `Prelude.head`, `Prelude.last`, `Prelude.init`, `Prelude.reverse` | base list ops |
+| `Prelude.take`, `Prelude.drop`, `Prelude.takeWhile`, `Prelude.dropWhile`, `Prelude.span` | base list ops |
+| `Prelude.replicate`, `Prelude.concat`, `Prelude.concatMap`, `Prelude.filter` | base list ops |
+| `Prelude.foldr`, `Prelude.foldl`, `Prelude.sum`, `Prelude.all`, `Prelude.any`, `Prelude.elem` | base list ops |
+| `Prelude.zip`, `Prelude.zipWith`, `Prelude.zipWith3` | base list ops |
+| `Prelude.maybe`, `Prelude.const`, `Prelude.id` | base helpers |
+| `Prelude.fromIntegral`, `Prelude.fromEnum`, `Prelude.toEnum`, `Prelude.maxBound`, `Prelude.minBound` | numerics |
+| `Prelude.mod`, `Prelude.div` | base division |
+| `Prelude.fst`, `Prelude.snd` | tuple accessors (`Tuple.first` / `Tuple.second` also work) |
+| `Prelude.fmap`, `Prelude.mapM_`, `Prelude.traverse` | when you specifically want base behaviour |
+| `Prelude.otherwise` | NriPrelude imports it but does not re-export |
+| `Prelude..` (function composition with `.`) | NriPrelude uses `<<` / `>>` instead |
+| `Prelude.<>` | monoidal append - NriPrelude does not re-export |
+| `Prelude.>>=`, `Prelude.>>` | when you want base monad sequencing (rare; NriPrelude exports `>>=` directly, `>>` from base is hidden by NriPrelude's composition `>>`) |
+| `Prelude.&&`, `Prelude.\|\|`, `Prelude.==`, `Prelude.<` etc | only when an instance must use base's class definition (e.g. in a `deriving` clause, NriPrelude's class IS base's class - you do not need qualifying for that case) |
+
+## Critical gotchas
+
+### `Int` vs `Int64`
+
+`NriPrelude.Int` is **not** base's `Int`. NriPrelude defines:
+
+```haskell
+type Int = Data.Int.Int64
+```
+
+Base's `Int` (the platform-native machine word, 32 or 64 bits) is
+reached as `Prelude.Int`. **The two are different types at the GHC
+level**, even though they're numerically the same on a 64-bit machine.
+
+This means:
+
+- `posLine :: Int` from `Quone.Position` is `Int64`.
+- `length :: [a] -> Prelude.Int` from base is base's native `Int`.
+- A type signature using bare `Int` gets `Int64`. A signature using
+  `Prelude.Int` gets the platform-native `Int`. **They will not
+  unify.**
+- Megaparsec, `Data.Map.size`, `Data.Text.length`, and most other
+  base/Hackage libraries use base's `Int`. Anywhere you cross a
+  boundary between NriPrelude code and one of those libraries you
+  may need `Prelude.fromIntegral` to bridge.
+- If GHC complains "couldn't match type `Int64` with `Int`" you have
+  this problem. The fix is either to qualify the type as
+  `Prelude.Int` everywhere on the relevant value's path, or to
+  insert `Prelude.fromIntegral` at the call site that crosses the
+  boundary.
+
+### `<>` collisions
+
+Several modules locally define a `<>` operator (e.g.
+`Quone.Format.Doc`'s `Doc` concatenation, the formatter's
+`<+>`). Those modules use:
+
+```haskell
+import NriPrelude hiding ((<>), (<+>))
+import qualified Prelude
+```
+
+The `hiding` clause is required so the local `<>` wins. When editing
+those files, `<>` always means the local definition; reach for
+`Prelude.<>` if you need monoidal append on `Text`.
+
+### `>>` is not Monad sequence
+
+`NriPrelude` re-exports `>>` from `Internal.Shortcut`'s
+`Basics`, where it is **left-to-right function composition** (the
+mirror of `<<`). It is NOT the Monad sequence operator.
+
+For monadic sequencing, use `do`-notation or `>>=`. For function
+composition, prefer `>>` and `<<` over `Prelude..` (which is hidden
+by the convention).
+
+### `otherwise` is not in scope by default
+
+Despite `Basics` importing it, `otherwise` is not re-exported by
+`NriPrelude`. Use `Prelude.otherwise` in pattern guards:
+
+```haskell
+foo x
+    | x > 0 = "positive"
+    | Prelude.otherwise = "non-positive"
+```
+
+(Or reach for `Basics`'s `Order` predicates and avoid guards.)
+
+### `True` / `False` work bare
+
+These ARE re-exported via NriPrelude's `Bool (..)` re-export. You do
+not need `Prelude.True` / `Prelude.False`.
+
+### Show in deriving clauses uses `Prelude.Show` (the same class)
+
+```haskell
+data Foo = Foo
+    deriving (Prelude.Show, Prelude.Eq, Prelude.Ord)
+```
+
+`Prelude.Show` and `NriPrelude`'s re-exported `Show` are the **same
+class** (both come from `Prelude`). Either spelling derives the same
+instance. The codebase convention is to use `Prelude.Show` etc. in
+`deriving` clauses for clarity (it reads as "the standard Show").
+
+## Why the project does not use a `Quone.Prelude` shim
+
+A shim that re-exports `NriPrelude` plus the missing base names was
+prototyped (in commit history under "tests-as-spec extractor work"
+and again in "Prelude.X cleanup attempt") and pulled both times.
+The blocker is the `Int` vs `Int64` semantic conflict above: a shim
+that re-exposes both NriPrelude's `Int` and base's `Int` is
+impossible without choosing one over the other, and either choice
+breaks part of the codebase.
+
+If you find yourself wanting bare `pure` / `show` / `True` / `<>` /
+etc. without the `Prelude.` prefix, the right move is to scope your
+desire to one module and add `import qualified Prelude as P` then
+use `P.pure` etc. - shorter prefix, same idea, no library-wide
+commitment.

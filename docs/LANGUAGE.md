@@ -7,10 +7,13 @@ or `[out of scope]` is informative and not part of the conforming surface.
 a precise picture of what Quone v0.0.1 includes, what it means, and how it
 is compiled to R.
 
-**Document scope:** This document defines the Quone language at the source,
-type, and translation level for v0.0.1. It does not specify the
-implementation details of any particular compiler, IDE, or build tool,
-except where those details are required for conformance.
+**Document scope:** This document defines the Quone language at the source
+and type level for v0.0.1: lexical structure, syntax, types, static
+semantics, and conformance. The translation to R and the project /
+package model live in [COMPILATION.md](COMPILATION.md). The
+command-line tool surface lives in [CLI.md](CLI.md). The formatter
+lives in [FORMATTER.md](FORMATTER.md). The LSP server and REPL live
+in [IDE.md](IDE.md).
 
 ---
 
@@ -28,8 +31,8 @@ except where those details are required for conformance.
 10. [Standard environment](#10-standard-environment)
 11. [File loading and decoding](#11-file-loading-and-decoding)
 12. [Errors and runtime fallibility](#12-errors-and-runtime-fallibility)
-13. [Translation to R](#13-translation-to-r)
-14. [Project model and package generation](#14-project-model-and-package-generation)
+13. [Translation to R](#13-translation-to-r) (moved to [COMPILATION.md section 1](COMPILATION.md#1-translation-to-r))
+14. [Project model and package generation](#14-project-model-and-package-generation) (moved to [COMPILATION.md section 2](COMPILATION.md#2-project-model-and-package-generation))
 15. [Conformance levels](#15-conformance-levels)
 16. [Testing requirements](#16-testing-requirements)
 17. [Version 0.0.1 scope](#17-version-001-scope)
@@ -134,6 +137,54 @@ identifier, even though R itself permits `.` in identifiers.
 - **Uppercase identifiers** start with an uppercase letter. They are used
   for type names, constructors, and module path segments.
 
+<!-- BEGIN tests:3_2 -->
+**Tests** (7):
+
+- [`lex/identifier_lowercase_section_3_2`](https://github.com/quone-lang/compiler/blob/19830fa0a68e994f6062b7a0cab2894a70b566d5/tests/Test/LexTests.hs#L202)
+- [`lex/identifier_lowercase_with_underscore_section_3_2`](https://github.com/quone-lang/compiler/blob/19830fa0a68e994f6062b7a0cab2894a70b566d5/tests/Test/LexTests.hs#L204)
+- [`lex/identifier_lowercase_with_digits_section_3_2`](https://github.com/quone-lang/compiler/blob/19830fa0a68e994f6062b7a0cab2894a70b566d5/tests/Test/LexTests.hs#L206)
+- [`lex/identifier_uppercase_section_3_2`](https://github.com/quone-lang/compiler/blob/19830fa0a68e994f6062b7a0cab2894a70b566d5/tests/Test/LexTests.hs#L208)
+- [`lex/identifier_uppercase_with_digits_section_3_2`](https://github.com/quone-lang/compiler/blob/19830fa0a68e994f6062b7a0cab2894a70b566d5/tests/Test/LexTests.hs#L210)
+- [`lex/identifier_leading_underscore_rejected_section_3_2`](https://github.com/quone-lang/compiler/blob/19830fa0a68e994f6062b7a0cab2894a70b566d5/tests/Test/LexTests.hs#L212)
+- [`lex/identifier_dot_separates_field_access_section_3_2`](https://github.com/quone-lang/compiler/blob/19830fa0a68e994f6062b7a0cab2894a70b566d5/tests/Test/LexTests.hs#L224)
+
+<details>
+<summary>Show test source</summary>
+
+```haskell
+    test "lex/identifier_lowercase_section_3_2" <|
+        Prelude.pure (firstTokens "score" === [TLowerIdent "score"])
+    test "lex/identifier_lowercase_with_underscore_section_3_2" <|
+        Prelude.pure (firstTokens "max_score" === [TLowerIdent "max_score"])
+    test "lex/identifier_lowercase_with_digits_section_3_2" <|
+        Prelude.pure (firstTokens "x1" === [TLowerIdent "x1"])
+    test "lex/identifier_uppercase_section_3_2" <|
+        Prelude.pure (firstTokens "Maybe" === [TUpperIdent "Maybe"])
+    test "lex/identifier_uppercase_with_digits_section_3_2" <|
+        Prelude.pure (firstTokens "Vec3" === [TUpperIdent "Vec3"])
+    test "lex/identifier_leading_underscore_rejected_section_3_2" <|
+        -- A lone leading '_' tokenises as TUnderscore (the wildcard
+        -- pattern); it's the parser's job to reject it as an
+        -- identifier in non-pattern positions. Here we only check that
+        -- "_oops" does NOT come out as a single identifier token.
+        Prelude.pure
+            ( assert
+                ( firstTokens "_oops"
+                    Prelude./= [TLowerIdent "_oops"]
+                )
+                "leading-underscore identifier should not lex as a single TLowerIdent"
+            )
+    test "lex/identifier_dot_separates_field_access_section_3_2" <|
+        Prelude.pure
+            ( firstTokens "row.score"
+                === [TLowerIdent "row", TDot, TLowerIdent "score"]
+            )
+```
+
+</details>
+<!-- END tests:3_2 -->
+
+
 #### 3.2.1 Naming conventions
 
 The following conventions are normative for v0.0.1 source style. They
@@ -215,6 +266,85 @@ correct double arithmetic; an author who deliberately wants integer
 arithmetic writes `1L`, `2L`, `3L` and is reminded by the suffix that
 they have stepped onto the integer track.
 
+<!-- BEGIN tests:3_3 -->
+**Tests** (17):
+
+- [`lex/bare_zero_is_double_section_3_3`](https://github.com/quone-lang/compiler/blob/19830fa0a68e994f6062b7a0cab2894a70b566d5/tests/Test/LexTests.hs#L63)
+- [`lex/bare_integer_is_double_section_3_3`](https://github.com/quone-lang/compiler/blob/19830fa0a68e994f6062b7a0cab2894a70b566d5/tests/Test/LexTests.hs#L67)
+- [`lex/integer_with_L_suffix_section_3_3`](https://github.com/quone-lang/compiler/blob/19830fa0a68e994f6062b7a0cab2894a70b566d5/tests/Test/LexTests.hs#L69)
+- [`lex/integer_zero_with_L_suffix_section_3_3`](https://github.com/quone-lang/compiler/blob/19830fa0a68e994f6062b7a0cab2894a70b566d5/tests/Test/LexTests.hs#L73)
+- [`lex/double_simple_section_3_3`](https://github.com/quone-lang/compiler/blob/19830fa0a68e994f6062b7a0cab2894a70b566d5/tests/Test/LexTests.hs#L75)
+- [`lex/double_zero_section_3_3`](https://github.com/quone-lang/compiler/blob/19830fa0a68e994f6062b7a0cab2894a70b566d5/tests/Test/LexTests.hs#L77)
+- [`lex/double_with_L_suffix_rejected_section_3_3`](https://github.com/quone-lang/compiler/blob/19830fa0a68e994f6062b7a0cab2894a70b566d5/tests/Test/LexTests.hs#L79)
+- [`lex/integer_suffix_must_be_terminator_section_3_3`](https://github.com/quone-lang/compiler/blob/19830fa0a68e994f6062b7a0cab2894a70b566d5/tests/Test/LexTests.hs#L84)
+- [`lex/character_string_section_3_3`](https://github.com/quone-lang/compiler/blob/19830fa0a68e994f6062b7a0cab2894a70b566d5/tests/Test/LexTests.hs#L91)
+- [`lex/character_empty_string_section_3_3`](https://github.com/quone-lang/compiler/blob/19830fa0a68e994f6062b7a0cab2894a70b566d5/tests/Test/LexTests.hs#L93)
+- [`lex/character_unterminated_string_rejected_section_3_3`](https://github.com/quone-lang/compiler/blob/19830fa0a68e994f6062b7a0cab2894a70b566d5/tests/Test/LexTests.hs#L95)
+- [`lex/logical_true_constructor_section_3_3`](https://github.com/quone-lang/compiler/blob/19830fa0a68e994f6062b7a0cab2894a70b566d5/tests/Test/LexTests.hs#L97)
+- [`lex/logical_false_constructor_section_3_3`](https://github.com/quone-lang/compiler/blob/19830fa0a68e994f6062b7a0cab2894a70b566d5/tests/Test/LexTests.hs#L99)
+- [`type/literal_integer_section_3_3`](https://github.com/quone-lang/compiler/blob/19830fa0a68e994f6062b7a0cab2894a70b566d5/tests/Test/TypeTests.hs#L55)
+- [`type/literal_bare_digits_default_to_double_section_3_3`](https://github.com/quone-lang/compiler/blob/19830fa0a68e994f6062b7a0cab2894a70b566d5/tests/Test/TypeTests.hs#L59)
+- [`type/literal_double_section_3_3`](https://github.com/quone-lang/compiler/blob/19830fa0a68e994f6062b7a0cab2894a70b566d5/tests/Test/TypeTests.hs#L61)
+- [`type/literal_character_section_3_3`](https://github.com/quone-lang/compiler/blob/19830fa0a68e994f6062b7a0cab2894a70b566d5/tests/Test/TypeTests.hs#L63)
+
+<details>
+<summary>Show test source</summary>
+
+```haskell
+    test "lex/bare_zero_is_double_section_3_3" <|
+        -- Per LANGUAGE.md section 3.3, bare digit runs are doubles
+        -- (matches R, where `0` is `numeric` not `integer`).
+        Prelude.pure (firstTokens "0" === [TFloatLit 0.0])
+    test "lex/bare_integer_is_double_section_3_3" <|
+        Prelude.pure (firstTokens "42" === [TFloatLit 42.0])
+    test "lex/integer_with_L_suffix_section_3_3" <|
+        -- Trailing `L` makes the literal an Integer, mirroring R's
+        -- `42L` syntax.
+        Prelude.pure (firstTokens "42L" === [TIntLit 42])
+    test "lex/integer_zero_with_L_suffix_section_3_3" <|
+        Prelude.pure (firstTokens "0L" === [TIntLit 0])
+    test "lex/double_simple_section_3_3" <|
+        Prelude.pure (firstTokens "3.14" === [TFloatLit 3.14])
+    test "lex/double_zero_section_3_3" <|
+        Prelude.pure (firstTokens "0.0" === [TFloatLit 0.0])
+    test "lex/double_with_L_suffix_rejected_section_3_3" <|
+        -- `1.5L` would mean "Integer with a fractional part", which
+        -- has no sensible interpretation. The lexer rejects it
+        -- rather than silently dropping the fraction.
+        Prelude.pure (assertLeft (lexInput "1.5L"))
+    test "lex/integer_suffix_must_be_terminator_section_3_3" <|
+        -- `42Lx` is NOT an integer literal followed by an identifier;
+        -- the `L` only counts as a suffix when followed by a
+        -- non-identifier character. Two tokens should result, with
+        -- `Lx` lexed as an upper-ident because it starts with `L`.
+        Prelude.pure
+            (firstTokens "42Lx" === [TFloatLit 42.0, TUpperIdent "Lx"])
+    test "lex/character_string_section_3_3" <|
+        Prelude.pure (firstTokens "\"hello\"" === [TStringLit "hello"])
+    test "lex/character_empty_string_section_3_3" <|
+        Prelude.pure (firstTokens "\"\"" === [TStringLit ""])
+    test "lex/character_unterminated_string_rejected_section_3_3" <|
+        Prelude.pure (assertLeft (lexInput "\"oops"))
+    test "lex/logical_true_constructor_section_3_3" <|
+        Prelude.pure (firstTokens "True" === [TUpperIdent "True"])
+    test "lex/logical_false_constructor_section_3_3" <|
+        Prelude.pure (firstTokens "False" === [TUpperIdent "False"])
+    test "type/literal_integer_section_3_3" <|
+        -- Per LANGUAGE.md section 3.3, an Integer literal MUST carry
+        -- the trailing `L` suffix; bare `42` is a Double.
+        infersTo "x <- 42L" "x" "Integer"
+    test "type/literal_bare_digits_default_to_double_section_3_3" <|
+        infersTo "x <- 42" "x" "Double"
+    test "type/literal_double_section_3_3" <|
+        infersTo "x <- 3.14" "x" "Double"
+    test "type/literal_character_section_3_3" <|
+        infersTo "x <- \"hi\"" "x" "Character"
+```
+
+</details>
+<!-- END tests:3_3 -->
+
+
 ### 3.4 Reserved keywords
 
 The following identifiers are reserved and MUST NOT be used as variable or
@@ -276,6 +406,35 @@ division, `%` modulo, `^` exponentiation. Their typing rules are in
 [section 8.8](#88-arithmetic-and-comparison-operators) and their R
 lowering is in [section 13.2](#132-primitive-mappings).
 
+<!-- BEGIN tests:3_5 -->
+**Tests** (5):
+
+- [`lex/operator_arrow_vs_minus_disambiguation_section_3_5`](https://github.com/quone-lang/compiler/blob/19830fa0a68e994f6062b7a0cab2894a70b566d5/tests/Test/LexTests.hs#L179)
+- [`lex/operator_pipe_vs_pipe_bar_disambiguation_section_3_5`](https://github.com/quone-lang/compiler/blob/19830fa0a68e994f6062b7a0cab2894a70b566d5/tests/Test/LexTests.hs#L181)
+- [`lex/operator_int_div_vs_slash_disambiguation_section_3_5`](https://github.com/quone-lang/compiler/blob/19830fa0a68e994f6062b7a0cab2894a70b566d5/tests/Test/LexTests.hs#L183)
+- [`lex/operator_eq_vs_assign_disambiguation_section_3_5`](https://github.com/quone-lang/compiler/blob/19830fa0a68e994f6062b7a0cab2894a70b566d5/tests/Test/LexTests.hs#L185)
+- [`lex/operator_dotdot_vs_dot_disambiguation_section_3_5`](https://github.com/quone-lang/compiler/blob/19830fa0a68e994f6062b7a0cab2894a70b566d5/tests/Test/LexTests.hs#L187)
+
+<details>
+<summary>Show test source</summary>
+
+```haskell
+    test "lex/operator_arrow_vs_minus_disambiguation_section_3_5" <|
+                Prelude.pure (firstTokens "->-" === [TArrow, TMinus])
+    test "lex/operator_pipe_vs_pipe_bar_disambiguation_section_3_5" <|
+                Prelude.pure (firstTokens "|>|" === [TPipe, TPipeBar])
+    test "lex/operator_int_div_vs_slash_disambiguation_section_3_5" <|
+                Prelude.pure (firstTokens "// /" === [TIntDiv, TSlash])
+    test "lex/operator_eq_vs_assign_disambiguation_section_3_5" <|
+                Prelude.pure (firstTokens "===" === [TEq, TAssign])
+    test "lex/operator_dotdot_vs_dot_disambiguation_section_3_5" <|
+                Prelude.pure (firstTokens "..." === [TDotDot, TDot])
+```
+
+</details>
+<!-- END tests:3_5 -->
+
+
 ### 3.6 Comments
 
 **Line comments.** A `#` character that is not inside a string literal
@@ -329,6 +488,51 @@ normalize max_score raw <-
 repeated `#` lines, as is conventional in R itself. A nestable
 `{- ... -}` form is `[planned]` and MAY be added in a later revision.
 
+<!-- BEGIN tests:3_6 -->
+**Tests** (6):
+
+- [`lex/comment_line_dropped_section_3_6`](https://github.com/quone-lang/compiler/blob/19830fa0a68e994f6062b7a0cab2894a70b566d5/tests/Test/LexTests.hs#L240)
+- [`lex/comment_line_alone_yields_eof_section_3_6`](https://github.com/quone-lang/compiler/blob/19830fa0a68e994f6062b7a0cab2894a70b566d5/tests/Test/LexTests.hs#L242)
+- [`lex/comment_doc_single_line_section_3_6`](https://github.com/quone-lang/compiler/blob/19830fa0a68e994f6062b7a0cab2894a70b566d5/tests/Test/LexTests.hs#L244)
+- [`lex/comment_doc_multi_line_collapsed_section_3_6`](https://github.com/quone-lang/compiler/blob/19830fa0a68e994f6062b7a0cab2894a70b566d5/tests/Test/LexTests.hs#L249)
+- [`lex/comment_doc_strips_one_leading_space_section_3_6`](https://github.com/quone-lang/compiler/blob/19830fa0a68e994f6062b7a0cab2894a70b566d5/tests/Test/LexTests.hs#L254)
+- [`lex/comment_doc_then_code_attached_section_3_6`](https://github.com/quone-lang/compiler/blob/19830fa0a68e994f6062b7a0cab2894a70b566d5/tests/Test/LexTests.hs#L259)
+
+<details>
+<summary>Show test source</summary>
+
+```haskell
+    test "lex/comment_line_dropped_section_3_6" <|
+        Prelude.pure (firstTokens "x # this is dropped" === [TLowerIdent "x"])
+    test "lex/comment_line_alone_yields_eof_section_3_6" <|
+        Prelude.pure (firstTokens "# nothing else" === [])
+    test "lex/comment_doc_single_line_section_3_6" <|
+        Prelude.pure
+            ( firstTokens "#' Hello"
+                === [TDocBlock "Hello"]
+            )
+    test "lex/comment_doc_multi_line_collapsed_section_3_6" <|
+        Prelude.pure
+            ( firstTokens "#' Line one\n#' Line two"
+                === [TDocBlock "Line one\nLine two"]
+            )
+    test "lex/comment_doc_strips_one_leading_space_section_3_6" <|
+        Prelude.pure
+            ( firstTokens "#'  two spaces"
+                === [TDocBlock " two spaces"]
+            )
+    test "lex/comment_doc_then_code_attached_section_3_6" <|
+        Prelude.pure
+            ( assert
+                (List.elem (TDocBlock "doc") (allTokens "#' doc\nx"))
+                "doc block should appear before the next token"
+            )
+```
+
+</details>
+<!-- END tests:3_6 -->
+
+
 ### 3.7 Indentation and layout
 
 Quone is indentation-sensitive in practice: parsers use indentation guards to
@@ -346,6 +550,53 @@ For v0.0.1, the normative rules are:
 Finer indentation rules - exact column behaviour for nested `case`, layout
 inside dataframe verbs, and continuation lines - are `[planned]`. See
 [section 19](#19-open-questions-and-future-work).
+
+<!-- BEGIN tests:3_7 -->
+**Tests** (3):
+
+- [`lex/layout_indent_emitted_section_3_7`](https://github.com/quone-lang/compiler/blob/19830fa0a68e994f6062b7a0cab2894a70b566d5/tests/Test/LexTests.hs#L276)
+- [`lex/layout_dedent_emitted_section_3_7`](https://github.com/quone-lang/compiler/blob/19830fa0a68e994f6062b7a0cab2894a70b566d5/tests/Test/LexTests.hs#L285)
+- [`lex/layout_eof_closes_layers_section_3_7`](https://github.com/quone-lang/compiler/blob/19830fa0a68e994f6062b7a0cab2894a70b566d5/tests/Test/LexTests.hs#L294)
+
+<details>
+<summary>Show test source</summary>
+
+```haskell
+    test "lex/layout_indent_emitted_section_3_7" <|
+        let
+            toks = allTokens "let\n  x"
+        in
+        Prelude.pure
+            ( assert
+                (TIndent `List.elem` toks)
+                "TIndent expected when body indents"
+            )
+    test "lex/layout_dedent_emitted_section_3_7" <|
+        let
+            toks = allTokens "let\n  x\ny"
+        in
+        Prelude.pure
+            ( assert
+                (TDedent `List.elem` toks)
+                "TDedent expected when indent decreases"
+            )
+    test "lex/layout_eof_closes_layers_section_3_7" <|
+        let
+            toks = allTokens "let\n  x\n  y"
+            eof = Prelude.last toks
+            dedents =
+                Prelude.length (Prelude.filter (Prelude.== TDedent) toks)
+        in
+        Prelude.pure
+            ( assert
+                (eof Prelude.== TEof Prelude.&& dedents Prelude.>= 1)
+                "EOF should close any open indent layers"
+            )
+```
+
+</details>
+<!-- END tests:3_7 -->
+
 
 #### 3.7.1 Multi-variant `type` declarations
 
@@ -386,6 +637,34 @@ distinct from the R-level concept of a "package": a Quone project is one
 or more modules that together compile to a single R package in package
 mode (see [section 14.6](#146-multi-module-package-layout)).
 
+<!-- BEGIN tests:4_1 -->
+**Tests** (2):
+
+- [`parse/script_no_module_header_section_4_1`](https://github.com/quone-lang/compiler/blob/19830fa0a68e994f6062b7a0cab2894a70b566d5/tests/Test/ParseTests.hs#L54)
+- [`parse/multiple_top_level_decls_section_4_1`](https://github.com/quone-lang/compiler/blob/19830fa0a68e994f6062b7a0cab2894a70b566d5/tests/Test/ParseTests.hs#L60)
+
+<details>
+<summary>Show test source</summary>
+
+```haskell
+    test "parse/script_no_module_header_section_4_1" <|
+        case parseProgram "x <- 1" of
+            Prelude.Right (CProgram {programModule = Nothing, programDecls = [CDValue _]}) ->
+                Prelude.pure Pass
+            other ->
+                Prelude.pure (Fail (T.pack (Prelude.show other)))
+    test "parse/multiple_top_level_decls_section_4_1" <|
+        case parseProgram "x <- 1\ny <- 2" of
+            Prelude.Right (CProgram {programDecls = decls}) ->
+                Prelude.pure (Prelude.length decls === 2)
+            other ->
+                Prelude.pure (Fail (T.pack (Prelude.show other)))
+```
+
+</details>
+<!-- END tests:4_1 -->
+
+
 ### 4.2 Module declarations
 
 A module declaration names the module and lists the bindings it exposes
@@ -414,6 +693,44 @@ The dotted name to the left of `exporting` is the module path. Module paths
 are case-sensitive and MUST be composed of uppercase identifiers separated by
 `.`.
 
+<!-- BEGIN tests:4_2 -->
+**Tests** (2):
+
+- [`parse/module_decl_explicit_exports_section_4_2`](https://github.com/quone-lang/compiler/blob/19830fa0a68e994f6062b7a0cab2894a70b566d5/tests/Test/ParseTests.hs#L71)
+- [`parse/module_decl_wildcard_export_section_4_2`](https://github.com/quone-lang/compiler/blob/19830fa0a68e994f6062b7a0cab2894a70b566d5/tests/Test/ParseTests.hs#L83)
+
+<details>
+<summary>Show test source</summary>
+
+```haskell
+    test "parse/module_decl_explicit_exports_section_4_2" <|
+        case parseProgram "module Stats.Transform exporting (normalize, rmse)" of
+            Prelude.Right (CProgram {programModule = Just m}) ->
+                Prelude.pure
+                    ( assert
+                        ( Prelude.length (moduleDeclPath m) Prelude.== 2
+                            Prelude.&& isExportNames (moduleDeclExports m)
+                        )
+                        "expected dotted path with two segments and explicit exports"
+                    )
+            other ->
+                Prelude.pure (Fail (T.pack (Prelude.show other)))
+    test "parse/module_decl_wildcard_export_section_4_2" <|
+        case parseProgram "module Foo exporting (..)" of
+            Prelude.Right (CProgram {programModule = Just m}) ->
+                Prelude.pure
+                    ( case moduleDeclExports m of
+                        CExportAll _ -> Pass
+                        _ -> Fail "expected CExportAll"
+                    )
+            other ->
+                Prelude.pure (Fail (T.pack (Prelude.show other)))
+```
+
+</details>
+<!-- END tests:4_2 -->
+
+
 ### 4.3 Top-level declaration kinds
 
 The v0.0.1 declaration kinds are:
@@ -427,6 +744,57 @@ The v0.0.1 declaration kinds are:
 The grammar for each is given in [section 5](#5-concrete-syntax) and the
 typing rules in [sections 7](#7-type-system) and
 [8](#8-static-semantics).
+
+<!-- BEGIN tests:4_3 -->
+**Tests** (2):
+
+- [`resolve/duplicate_decl_rejected_section_4_3`](https://github.com/quone-lang/compiler/blob/19830fa0a68e994f6062b7a0cab2894a70b566d5/tests/Test/ResolveTests.hs#L179)
+- [`resolve/no_duplicates_passes_section_4_3`](https://github.com/quone-lang/compiler/blob/19830fa0a68e994f6062b7a0cab2894a70b566d5/tests/Test/ResolveTests.hs#L196)
+
+<details>
+<summary>Show test source</summary>
+
+```haskell
+    test "resolve/duplicate_decl_rejected_section_4_3" <|
+        let
+            src =
+                T.unlines
+                    [ "x <- 1"
+                    , "x <- 2"
+                    ]
+        in
+        case desugarSource src of
+            Prelude.Right p ->
+                Prelude.pure
+                    ( assert
+                        (Prelude.not (Prelude.null (resolveProgram p)))
+                        "expected a duplicate-binding diagnostic"
+                    )
+            Prelude.Left d ->
+                Prelude.pure (Fail (T.pack (Prelude.show d)))
+    test "resolve/no_duplicates_passes_section_4_3" <|
+        let
+            src =
+                T.unlines
+                    [ "x <- 1"
+                    , "y <- 2"
+                    ]
+        in
+        case desugarSource src of
+            Prelude.Right p ->
+                Prelude.pure
+                    ( assert
+                        (Prelude.null (resolveProgram p))
+                        ("expected no diagnostics; got "
+                            Prelude.<> T.pack (Prelude.show (resolveProgram p)))
+                    )
+            Prelude.Left d ->
+                Prelude.pure (Fail (T.pack (Prelude.show d)))
+```
+
+</details>
+<!-- END tests:4_3 -->
+
 
 ### 4.4 Project model
 
@@ -497,6 +865,146 @@ module-encapsulation rule; see
 [section 4.2](#42-module-declarations)). For foreign R imports, no
 visibility check applies - any R function the user is willing to type is
 importable.
+
+<!-- BEGIN tests:4_5 -->
+**Tests** (9):
+
+- [`parse/foreign_import_section_4_5`](https://github.com/quone-lang/compiler/blob/19830fa0a68e994f6062b7a0cab2894a70b566d5/tests/Test/ParseTests.hs#L162)
+- [`parse/quone_import_single_name_section_4_5`](https://github.com/quone-lang/compiler/blob/19830fa0a68e994f6062b7a0cab2894a70b566d5/tests/Test/ParseTests.hs#L171)
+- [`parse/quone_import_multi_name_section_4_5`](https://github.com/quone-lang/compiler/blob/19830fa0a68e994f6062b7a0cab2894a70b566d5/tests/Test/ParseTests.hs#L177)
+- [`parse/quone_import_wildcard_section_4_5`](https://github.com/quone-lang/compiler/blob/19830fa0a68e994f6062b7a0cab2894a70b566d5/tests/Test/ParseTests.hs#L183)
+- [`resolve/import_visible_export_section_4_5`](https://github.com/quone-lang/compiler/blob/19830fa0a68e994f6062b7a0cab2894a70b566d5/tests/Test/ResolveTests.hs#L255)
+- [`resolve/import_invisible_name_rejected_section_4_5`](https://github.com/quone-lang/compiler/blob/19830fa0a68e994f6062b7a0cab2894a70b566d5/tests/Test/ResolveTests.hs#L272)
+- [`resolve/import_unknown_module_rejected_section_4_5`](https://github.com/quone-lang/compiler/blob/19830fa0a68e994f6062b7a0cab2894a70b566d5/tests/Test/ResolveTests.hs#L303)
+- [`type/foreign_import_binds_value_section_4_5`](https://github.com/quone-lang/compiler/blob/19830fa0a68e994f6062b7a0cab2894a70b566d5/tests/Test/TypeTests.hs#L291)
+- [`type/foreign_import_argument_type_enforced_section_4_5`](https://github.com/quone-lang/compiler/blob/19830fa0a68e994f6062b7a0cab2894a70b566d5/tests/Test/TypeTests.hs#L302)
+
+<details>
+<summary>Show test source</summary>
+
+```haskell
+    test "parse/foreign_import_section_4_5" <|
+        let
+            src = "import readr.read_csv : Character -> dataframe { name : Vector Character }"
+        in
+        case parseProgram src of
+            Prelude.Right (CProgram {programDecls = [CDImport (CForeignImport _ _ _)]}) ->
+                Prelude.pure Pass
+            other ->
+                Prelude.pure (Fail (T.pack (Prelude.show other)))
+    test "parse/quone_import_single_name_section_4_5" <|
+        case parseProgram "import Stats.Transform.normalize" of
+            Prelude.Right (CProgram {programDecls = [CDImport (CQuoneImport _ _ (CImportSingle _))]}) ->
+                Prelude.pure Pass
+            other ->
+                Prelude.pure (Fail (T.pack (Prelude.show other)))
+    test "parse/quone_import_multi_name_section_4_5" <|
+        case parseProgram "import Stats.Transform (normalize, rmse)" of
+            Prelude.Right (CProgram {programDecls = [CDImport (CQuoneImport _ _ (CImportNames items))]}) ->
+                Prelude.pure (Prelude.length items === 2)
+            other ->
+                Prelude.pure (Fail (T.pack (Prelude.show other)))
+    test "parse/quone_import_wildcard_section_4_5" <|
+        case parseProgram "import Stats.Transform (..)" of
+            Prelude.Right (CProgram {programDecls = [CDImport (CQuoneImport _ _ CImportAll)]}) ->
+                Prelude.pure Pass
+            other ->
+                Prelude.pure (Fail (T.pack (Prelude.show other)))
+    test "resolve/import_visible_export_section_4_5" <|
+        case (desugarSource sourceModSrc, desugarSource importerSrc) of
+            (Prelude.Right sourceProg, Prelude.Right importerProg) ->
+                let
+                    syms = Map.singleton
+                        (case programModule sourceProg of
+                            Just m -> modulePath m
+                            Nothing -> [])
+                        (collectSymbols sourceProg)
+                in
+                Prelude.pure
+                    ( assert
+                        (Prelude.null (resolveProject syms importerProg))
+                        ("expected no diagnostics; got "
+                            Prelude.<> T.pack (Prelude.show (resolveProject syms importerProg)))
+                    )
+            _ -> Prelude.pure (Fail "could not parse fixtures")
+    test "resolve/import_invisible_name_rejected_section_4_5" <|
+        let
+            sourceSrc =
+                T.unlines
+                    [ "module Stats.Transform exporting (rmse)"
+                    , ""
+                    , "rmse <- 1"
+                    , "internal_helper <- 2"
+                    ]
+            importerSrcLocal =
+                T.unlines
+                    [ "module Main exporting (..)"
+                    , ""
+                    , "import Stats.Transform.internal_helper"
+                    ]
+        in
+        case (desugarSource sourceSrc, desugarSource importerSrcLocal) of
+            (Prelude.Right sourceProg, Prelude.Right importerProg) ->
+                let
+                    syms = Map.singleton
+                        (modulePathOf sourceProg)
+                        (collectSymbols sourceProg)
+                    diags = resolveProject syms importerProg
+                in
+                Prelude.pure
+                    ( assert
+                        (Prelude.length diags Prelude.== 1)
+                        ("expected exactly one diagnostic; got "
+                            Prelude.<> T.pack (Prelude.show diags))
+                    )
+            _ -> Prelude.pure (Fail "could not parse fixtures")
+    test "resolve/import_unknown_module_rejected_section_4_5" <|
+        let
+            importerSrcLocal =
+                T.unlines
+                    [ "module Main exporting (..)"
+                    , ""
+                    , "import Other.Module.thing"
+                    ]
+        in
+        case desugarSource importerSrcLocal of
+            Prelude.Right importerProg ->
+                Prelude.pure
+                    ( assert
+                        (Prelude.not
+                            (Prelude.null (resolveProject Map.empty importerProg))
+                        )
+                        "expected an unknown-module diagnostic"
+                    )
+            other -> Prelude.pure (Fail (T.pack (Prelude.show other)))
+    test "type/foreign_import_binds_value_section_4_5" <|
+        -- A foreign-imported name can be referenced like any value.
+        case infer
+            ( T.unlines
+                [ "import readr.read_csv : Character -> Integer"
+                , ""
+                , "load path <- read_csv path"
+                ]
+            ) of
+            Prelude.Right _ -> Prelude.pure Pass
+            Prelude.Left d -> Prelude.pure (Fail (T.pack (Prelude.show d)))
+    test "type/foreign_import_argument_type_enforced_section_4_5" <|
+        Prelude.pure
+            ( assertLeft
+                ( infer
+                    ( T.unlines
+                        [ "import readr.read_csv : Character -> Integer"
+                        , ""
+                        , "x <- read_csv 42"
+                        ]
+                    )
+                )
+            )
+```
+
+</details>
+<!-- END tests:4_5 -->
+
 
 ---
 
@@ -650,6 +1158,229 @@ Literal        ::= IntLit | FloatLit | StringLit
                     `Result`. *)
 ```
 
+<!-- BEGIN tests:5_1 -->
+**Tests** (20):
+
+- [`parse/empty_program_section_5_1`](https://github.com/quone-lang/compiler/blob/19830fa0a68e994f6062b7a0cab2894a70b566d5/tests/Test/ParseTests.hs#L52)
+- [`parse/value_decl_section_5_1`](https://github.com/quone-lang/compiler/blob/19830fa0a68e994f6062b7a0cab2894a70b566d5/tests/Test/ParseTests.hs#L110)
+- [`parse/value_decl_with_annotation_section_5_1`](https://github.com/quone-lang/compiler/blob/19830fa0a68e994f6062b7a0cab2894a70b566d5/tests/Test/ParseTests.hs#L116)
+- [`parse/type_decl_single_variant_section_5_1`](https://github.com/quone-lang/compiler/blob/19830fa0a68e994f6062b7a0cab2894a70b566d5/tests/Test/ParseTests.hs#L133)
+- [`parse/type_decl_multi_variant_section_5_1`](https://github.com/quone-lang/compiler/blob/19830fa0a68e994f6062b7a0cab2894a70b566d5/tests/Test/ParseTests.hs#L139)
+- [`parse/type_alias_section_5_1`](https://github.com/quone-lang/compiler/blob/19830fa0a68e994f6062b7a0cab2894a70b566d5/tests/Test/ParseTests.hs#L153)
+- [`parse/expr_application_curried_section_5_1`](https://github.com/quone-lang/compiler/blob/19830fa0a68e994f6062b7a0cab2894a70b566d5/tests/Test/ParseTests.hs#L200)
+- [`parse/expr_lambda_section_5_1`](https://github.com/quone-lang/compiler/blob/19830fa0a68e994f6062b7a0cab2894a70b566d5/tests/Test/ParseTests.hs#L210)
+- [`parse/expr_let_section_5_1`](https://github.com/quone-lang/compiler/blob/19830fa0a68e994f6062b7a0cab2894a70b566d5/tests/Test/ParseTests.hs#L220)
+- [`parse/expr_pipe_section_5_1`](https://github.com/quone-lang/compiler/blob/19830fa0a68e994f6062b7a0cab2894a70b566d5/tests/Test/ParseTests.hs#L233)
+- [`parse/expr_record_literal_section_5_1`](https://github.com/quone-lang/compiler/blob/19830fa0a68e994f6062b7a0cab2894a70b566d5/tests/Test/ParseTests.hs#L243)
+- [`parse/expr_record_update_section_5_1`](https://github.com/quone-lang/compiler/blob/19830fa0a68e994f6062b7a0cab2894a70b566d5/tests/Test/ParseTests.hs#L253)
+- [`parse/expr_dataframe_literal_section_5_1`](https://github.com/quone-lang/compiler/blob/19830fa0a68e994f6062b7a0cab2894a70b566d5/tests/Test/ParseTests.hs#L263)
+- [`parse/expr_vector_literal_section_5_1`](https://github.com/quone-lang/compiler/blob/19830fa0a68e994f6062b7a0cab2894a70b566d5/tests/Test/ParseTests.hs#L273)
+- [`parse/expr_field_access_section_5_1`](https://github.com/quone-lang/compiler/blob/19830fa0a68e994f6062b7a0cab2894a70b566d5/tests/Test/ParseTests.hs#L283)
+- [`parse/expr_dplyr_verb_section_5_1`](https://github.com/quone-lang/compiler/blob/19830fa0a68e994f6062b7a0cab2894a70b566d5/tests/Test/ParseTests.hs#L293)
+- [`parse/literal_integer_section_5_1`](https://github.com/quone-lang/compiler/blob/19830fa0a68e994f6062b7a0cab2894a70b566d5/tests/Test/ParseTests.hs#L389)
+- [`parse/literal_bare_digits_is_double_section_5_1`](https://github.com/quone-lang/compiler/blob/19830fa0a68e994f6062b7a0cab2894a70b566d5/tests/Test/ParseTests.hs#L400)
+- [`parse/literal_double_section_5_1`](https://github.com/quone-lang/compiler/blob/19830fa0a68e994f6062b7a0cab2894a70b566d5/tests/Test/ParseTests.hs#L409)
+- [`parse/literal_string_section_5_1`](https://github.com/quone-lang/compiler/blob/19830fa0a68e994f6062b7a0cab2894a70b566d5/tests/Test/ParseTests.hs#L418)
+
+<details>
+<summary>Show test source</summary>
+
+```haskell
+    test "parse/empty_program_section_5_1" <|
+        Prelude.pure (assertRight (parseProgram ""))
+    test "parse/value_decl_section_5_1" <|
+        case parseProgram "x <- 1" of
+            Prelude.Right (CProgram {programDecls = [CDValue v]}) ->
+                Prelude.pure (lowerNameText (valueDeclName v) === "x")
+            other ->
+                Prelude.pure (Fail (T.pack (Prelude.show other)))
+    test "parse/value_decl_with_annotation_section_5_1" <|
+        let
+            src =
+                T.unlines
+                    [ "x : Integer"
+                    , "x <- 1"
+                    ]
+        in
+        case parseProgram src of
+            Prelude.Right (CProgram {programDecls = [CDValue v]}) ->
+                Prelude.pure
+                    ( assert
+                        (Prelude.maybe Prelude.False (Prelude.const Prelude.True) (valueDeclAnnotation v))
+                        "expected an annotation"
+                    )
+            other ->
+                Prelude.pure (Fail (T.pack (Prelude.show other)))
+    test "parse/type_decl_single_variant_section_5_1" <|
+        case parseProgram "type Bit <- Zero" of
+            Prelude.Right (CProgram {programDecls = [CDType d]}) ->
+                Prelude.pure (Prelude.length (typeDeclVariants d) === 1)
+            other ->
+                Prelude.pure (Fail (T.pack (Prelude.show other)))
+    test "parse/type_decl_multi_variant_section_5_1" <|
+        let
+            src =
+                T.unlines
+                    [ "type Maybe a"
+                    , "    <- Nothing"
+                    , "     | Just a"
+                    ]
+        in
+        case parseProgram src of
+            Prelude.Right (CProgram {programDecls = [CDType d]}) ->
+                Prelude.pure (Prelude.length (typeDeclVariants d) === 2)
+            other ->
+                Prelude.pure (Fail (T.pack (Prelude.show other)))
+    test "parse/type_alias_section_5_1" <|
+        let
+            src = "type alias Score <- Double"
+        in
+        case parseProgram src of
+            Prelude.Right (CProgram {programDecls = [CDTypeAlias _]}) ->
+                Prelude.pure Pass
+            other ->
+                Prelude.pure (Fail (T.pack (Prelude.show other)))
+    test "parse/expr_application_curried_section_5_1" <|
+        case parseProgram "x <- f 1 2" of
+            Prelude.Right (CProgram {programDecls = [CDValue v]}) ->
+                Prelude.pure
+                    ( assert
+                        (isApp (valueDeclBody v))
+                        "expected application"
+                    )
+            other ->
+                Prelude.pure (Fail (T.pack (Prelude.show other)))
+    test "parse/expr_lambda_section_5_1" <|
+        case parseProgram "x <- \\a b -> a + b" of
+            Prelude.Right (CProgram {programDecls = [CDValue v]}) ->
+                Prelude.pure
+                    ( case valueDeclBody v of
+                        CELambda _ params _ -> Prelude.length params === 2
+                        _ -> Fail "expected lambda"
+                    )
+            other ->
+                Prelude.pure (Fail (T.pack (Prelude.show other)))
+    test "parse/expr_let_section_5_1" <|
+        let
+            src = "x <- let y <- 1 in y + 2"
+        in
+        case parseProgram src of
+            Prelude.Right (CProgram {programDecls = [CDValue v]}) ->
+                Prelude.pure
+                    ( case valueDeclBody v of
+                        CELet _ bindings _ -> Prelude.length bindings === 1
+                        _ -> Fail "expected let"
+                    )
+            other ->
+                Prelude.pure (Fail (T.pack (Prelude.show other)))
+    test "parse/expr_pipe_section_5_1" <|
+        case parseProgram "x <- xs |> f |> g" of
+            Prelude.Right (CProgram {programDecls = [CDValue v]}) ->
+                Prelude.pure
+                    ( assert
+                        (isPipe (valueDeclBody v))
+                        "expected pipe expression"
+                    )
+            other ->
+                Prelude.pure (Fail (T.pack (Prelude.show other)))
+    test "parse/expr_record_literal_section_5_1" <|
+        case parseProgram "x <- { name = \"Alice\", score = 92.0 }" of
+            Prelude.Right (CProgram {programDecls = [CDValue v]}) ->
+                Prelude.pure
+                    ( case valueDeclBody v of
+                        CERecord _ fields -> Prelude.length fields === 2
+                        _ -> Fail "expected record literal"
+                    )
+            other ->
+                Prelude.pure (Fail (T.pack (Prelude.show other)))
+    test "parse/expr_record_update_section_5_1" <|
+        case parseProgram "x <- { student | score = 95.0 }" of
+            Prelude.Right (CProgram {programDecls = [CDValue v]}) ->
+                Prelude.pure
+                    ( case valueDeclBody v of
+                        CERecordUpdate _ _ fields -> Prelude.length fields === 1
+                        _ -> Fail (T.pack (Prelude.show (valueDeclBody v)))
+                    )
+            other ->
+                Prelude.pure (Fail (T.pack (Prelude.show other)))
+    test "parse/expr_dataframe_literal_section_5_1" <|
+        case parseProgram "x <- dataframe { name = [\"a\"], score = [1.0] }" of
+            Prelude.Right (CProgram {programDecls = [CDValue v]}) ->
+                Prelude.pure
+                    ( case valueDeclBody v of
+                        CEDataframe _ fields -> Prelude.length fields === 2
+                        _ -> Fail "expected dataframe literal"
+                    )
+            other ->
+                Prelude.pure (Fail (T.pack (Prelude.show other)))
+    test "parse/expr_vector_literal_section_5_1" <|
+        case parseProgram "x <- [1, 2, 3]" of
+            Prelude.Right (CProgram {programDecls = [CDValue v]}) ->
+                Prelude.pure
+                    ( case valueDeclBody v of
+                        CEVector _ items -> Prelude.length items === 3
+                        _ -> Fail "expected vector literal"
+                    )
+            other ->
+                Prelude.pure (Fail (T.pack (Prelude.show other)))
+    test "parse/expr_field_access_section_5_1" <|
+        case parseProgram "x <- row.score" of
+            Prelude.Right (CProgram {programDecls = [CDValue v]}) ->
+                Prelude.pure
+                    ( case valueDeclBody v of
+                        CEField _ _ _ -> Pass
+                        _ -> Fail "expected field access"
+                    )
+            other ->
+                Prelude.pure (Fail (T.pack (Prelude.show other)))
+    test "parse/expr_dplyr_verb_section_5_1" <|
+        case parseProgram "x <- students |> filter (score > 70.0)" of
+            Prelude.Right (CProgram {programDecls = [CDValue _]}) -> Prelude.pure Pass
+            other -> Prelude.pure (Fail (T.pack (Prelude.show other)))
+    test "parse/literal_integer_section_5_1" <|
+        -- Per LANGUAGE.md section 3.3, an Integer literal MUST carry
+        -- the trailing `L` suffix; a bare `42` is a Double.
+        case parseProgram "x <- 42L" of
+            Prelude.Right (CProgram {programDecls = [CDValue v]}) ->
+                Prelude.pure
+                    ( case valueDeclBody v of
+                        CELit _ (CLInt 42) -> Pass
+                        _ -> Fail "expected CLInt 42"
+                    )
+            other -> Prelude.pure (Fail (T.pack (Prelude.show other)))
+    test "parse/literal_bare_digits_is_double_section_5_1" <|
+        case parseProgram "x <- 42" of
+            Prelude.Right (CProgram {programDecls = [CDValue v]}) ->
+                Prelude.pure
+                    ( case valueDeclBody v of
+                        CELit _ (CLDouble _) -> Pass
+                        _ -> Fail "expected CLDouble for bare 42"
+                    )
+            other -> Prelude.pure (Fail (T.pack (Prelude.show other)))
+    test "parse/literal_double_section_5_1" <|
+        case parseProgram "x <- 3.14" of
+            Prelude.Right (CProgram {programDecls = [CDValue v]}) ->
+                Prelude.pure
+                    ( case valueDeclBody v of
+                        CELit _ (CLDouble _) -> Pass
+                        _ -> Fail "expected CLDouble"
+                    )
+            other -> Prelude.pure (Fail (T.pack (Prelude.show other)))
+    test "parse/literal_string_section_5_1" <|
+        case parseProgram "x <- \"hello\"" of
+            Prelude.Right (CProgram {programDecls = [CDValue v]}) ->
+                Prelude.pure
+                    ( case valueDeclBody v of
+                        CELit _ (CLChar "hello") -> Pass
+                        _ -> Fail "expected CLChar"
+                    )
+            other -> Prelude.pure (Fail (T.pack (Prelude.show other)))
+```
+
+</details>
+<!-- END tests:5_1 -->
+
+
 ### 5.2 Operator precedence
 
 From lowest to highest binding strength:
@@ -670,6 +1401,86 @@ All binary operators at a given level are left-associative unless this
 document specifies otherwise. Exponentiation (`^`) is **right-associative**:
 `2 ^ 3 ^ 2` means `2 ^ (3 ^ 2)`. Unary minus binds tighter than `^`, so
 `-2 ^ 2` means `(-2) ^ 2 = 4` rather than R's `-(2 ^ 2) = -4`.
+
+<!-- BEGIN tests:5_2 -->
+**Tests** (6):
+
+- [`parse/precedence_addition_left_assoc_section_5_2`](https://github.com/quone-lang/compiler/blob/19830fa0a68e994f6062b7a0cab2894a70b566d5/tests/Test/ParseTests.hs#L318)
+- [`parse/precedence_caret_right_assoc_section_5_2`](https://github.com/quone-lang/compiler/blob/19830fa0a68e994f6062b7a0cab2894a70b566d5/tests/Test/ParseTests.hs#L328)
+- [`parse/precedence_neg_tighter_than_caret_section_5_2`](https://github.com/quone-lang/compiler/blob/19830fa0a68e994f6062b7a0cab2894a70b566d5/tests/Test/ParseTests.hs#L338)
+- [`parse/precedence_mul_tighter_than_add_section_5_2`](https://github.com/quone-lang/compiler/blob/19830fa0a68e994f6062b7a0cab2894a70b566d5/tests/Test/ParseTests.hs#L348)
+- [`parse/precedence_pipe_lowest_section_5_2`](https://github.com/quone-lang/compiler/blob/19830fa0a68e994f6062b7a0cab2894a70b566d5/tests/Test/ParseTests.hs#L358)
+- [`parse/precedence_app_tighter_than_mul_section_5_2`](https://github.com/quone-lang/compiler/blob/19830fa0a68e994f6062b7a0cab2894a70b566d5/tests/Test/ParseTests.hs#L368)
+
+<details>
+<summary>Show test source</summary>
+
+```haskell
+    test "parse/precedence_addition_left_assoc_section_5_2" <|
+        -- 1 + 2 + 3 should parse as ((1 + 2) + 3)
+        case parseProgram "x <- 1 + 2 + 3" of
+            Prelude.Right (CProgram {programDecls = [CDValue v]}) ->
+                Prelude.pure
+                    ( case valueDeclBody v of
+                        CEBinOp _ COpAdd (CEBinOp _ COpAdd _ _) _ -> Pass
+                        other -> Fail ("expected ((1+2)+3); got " ++ T.pack (Prelude.show other))
+                    )
+            other -> Prelude.pure (Fail (T.pack (Prelude.show other)))
+    test "parse/precedence_caret_right_assoc_section_5_2" <|
+        -- 2 ^ 3 ^ 2 should parse as (2 ^ (3 ^ 2)) = 2 ^ 9 = 512
+        case parseProgram "x <- 2 ^ 3 ^ 2" of
+            Prelude.Right (CProgram {programDecls = [CDValue v]}) ->
+                Prelude.pure
+                    ( case valueDeclBody v of
+                        CEBinOp _ COpExp _ (CEBinOp _ COpExp _ _) -> Pass
+                        other -> Fail ("expected (2 ^ (3 ^ 2)); got " ++ T.pack (Prelude.show other))
+                    )
+            other -> Prelude.pure (Fail (T.pack (Prelude.show other)))
+    test "parse/precedence_neg_tighter_than_caret_section_5_2" <|
+        -- -2 ^ 2 should parse as (-2) ^ 2 = 4 (NOT R's -(2^2) = -4)
+        case parseProgram "x <- -2 ^ 2" of
+            Prelude.Right (CProgram {programDecls = [CDValue v]}) ->
+                Prelude.pure
+                    ( case valueDeclBody v of
+                        CEBinOp _ COpExp (CEUnary _ COpNeg _) _ -> Pass
+                        other -> Fail ("expected ((-2) ^ 2); got " ++ T.pack (Prelude.show other))
+                    )
+            other -> Prelude.pure (Fail (T.pack (Prelude.show other)))
+    test "parse/precedence_mul_tighter_than_add_section_5_2" <|
+        -- 1 + 2 * 3 should parse as 1 + (2 * 3)
+        case parseProgram "x <- 1 + 2 * 3" of
+            Prelude.Right (CProgram {programDecls = [CDValue v]}) ->
+                Prelude.pure
+                    ( case valueDeclBody v of
+                        CEBinOp _ COpAdd _ (CEBinOp _ COpMul _ _) -> Pass
+                        other -> Fail ("expected (1 + (2 * 3)); got " ++ T.pack (Prelude.show other))
+                    )
+            other -> Prelude.pure (Fail (T.pack (Prelude.show other)))
+    test "parse/precedence_pipe_lowest_section_5_2" <|
+        -- xs |> f + 1 should parse as xs |> (f + 1)
+        case parseProgram "x <- xs |> f + 1" of
+            Prelude.Right (CProgram {programDecls = [CDValue v]}) ->
+                Prelude.pure
+                    ( case valueDeclBody v of
+                        CEPipe _ _ (CEBinOp _ COpAdd _ _) -> Pass
+                        other -> Fail (T.pack (Prelude.show other))
+                    )
+            other -> Prelude.pure (Fail (T.pack (Prelude.show other)))
+    test "parse/precedence_app_tighter_than_mul_section_5_2" <|
+        -- f x * 2 should parse as (f x) * 2
+        case parseProgram "x <- f x * 2" of
+            Prelude.Right (CProgram {programDecls = [CDValue v]}) ->
+                Prelude.pure
+                    ( case valueDeclBody v of
+                        CEBinOp _ COpMul (CEApp _ _ _) _ -> Pass
+                        other -> Fail (T.pack (Prelude.show other))
+                    )
+            other -> Prelude.pure (Fail (T.pack (Prelude.show other)))
+```
+
+</details>
+<!-- END tests:5_2 -->
+
 
 ### 5.3 Surface-only forms
 
@@ -696,6 +1507,51 @@ and emit R's native `if (cond) ... else ...` instead of an `if` / `else
 if` chain over constructor tags; see
 [section 13.6](#136-pattern-matching).
 
+<!-- BEGIN tests:5_3 -->
+**Tests** (3):
+
+- [`ast/if_desugars_to_case_section_5_3`](https://github.com/quone-lang/compiler/blob/19830fa0a68e994f6062b7a0cab2894a70b566d5/tests/Test/AstTests.hs#L51)
+- [`parse/if_kept_in_cst_section_5_3`](https://github.com/quone-lang/compiler/blob/19830fa0a68e994f6062b7a0cab2894a70b566d5/tests/Test/ParseTests.hs#L486)
+- [`type/if_desugared_to_case_typed_section_5_3`](https://github.com/quone-lang/compiler/blob/19830fa0a68e994f6062b7a0cab2894a70b566d5/tests/Test/TypeTests.hs#L204)
+
+<details>
+<summary>Show test source</summary>
+
+```haskell
+    test "ast/if_desugars_to_case_section_5_3" <|
+        case desugarSource "x <- if c then 1 else 2" of
+            Prelude.Right p -> case Prelude.head (programDecls p) of
+                DValue v -> case valueDeclBody v of
+                    ECase _ _ arms ->
+                        Prelude.pure
+                            ( assert
+                                (Prelude.length arms Prelude.== 2 Prelude.&&
+                                    Prelude.all (\a -> isLogicalCon (caseArmPattern a)) arms)
+                                ("expected 2 case arms with True/False patterns; got " Prelude.<> T.pack (Prelude.show arms))
+                            )
+                    other ->
+                        Prelude.pure (Fail ("expected ECase; got " Prelude.<> T.pack (Prelude.show other)))
+                _ -> Prelude.pure (Fail "first decl was not DValue")
+            other -> Prelude.pure (Fail (T.pack (Prelude.show other)))
+    test "parse/if_kept_in_cst_section_5_3" <|
+        -- The CST keeps `if`; the desugar pass converts it to `case`.
+        -- Test 16.5's "no EIf in AST" is a desugar-stage concern.
+        case parseProgram "x <- if c then 1 else 2" of
+            Prelude.Right (CProgram {programDecls = [CDValue v]}) ->
+                Prelude.pure
+                    ( case valueDeclBody v of
+                        CEIf _ _ _ _ -> Pass
+                        other -> Fail ("expected CEIf in CST; got " ++ T.pack (Prelude.show other))
+                    )
+            other -> Prelude.pure (Fail (T.pack (Prelude.show other)))
+    test "type/if_desugared_to_case_typed_section_5_3" <|
+        infersTo "x <- if True then 1L else 2L" "x" "Integer"
+```
+
+</details>
+<!-- END tests:5_3 -->
+
+
 ### 5.4 Patterns
 
 The patterns supported in v0.0.1 are:
@@ -716,6 +1572,61 @@ The patterns supported in v0.0.1 are:
 The remaining pattern forms - vector patterns (`[a, b, c]`,
 `[head | tail]`), guards (`Just n | n > 0 -> ...`), and as-patterns
 (`x@(Just n) -> ...`) - are `[planned]` for a later revision.
+
+<!-- BEGIN tests:5_4 -->
+**Tests** (4):
+
+- [`parse/pattern_wildcard_section_5_4`](https://github.com/quone-lang/compiler/blob/19830fa0a68e994f6062b7a0cab2894a70b566d5/tests/Test/ParseTests.hs#L438)
+- [`parse/pattern_constructor_section_5_4`](https://github.com/quone-lang/compiler/blob/19830fa0a68e994f6062b7a0cab2894a70b566d5/tests/Test/ParseTests.hs#L447)
+- [`parse/pattern_record_short_section_5_4`](https://github.com/quone-lang/compiler/blob/19830fa0a68e994f6062b7a0cab2894a70b566d5/tests/Test/ParseTests.hs#L456)
+- [`parse/pattern_record_full_section_5_4`](https://github.com/quone-lang/compiler/blob/19830fa0a68e994f6062b7a0cab2894a70b566d5/tests/Test/ParseTests.hs#L466)
+
+<details>
+<summary>Show test source</summary>
+
+```haskell
+    test "parse/pattern_wildcard_section_5_4" <|
+        case parseProgram "x <- case y of\n    _ -> 1" of
+            Prelude.Right (CProgram {programDecls = [CDValue v]}) ->
+                Prelude.pure
+                    ( case valueDeclBody v of
+                        CECase _ _ [CCaseArm {caseArmPattern = CPWildcard _}] -> Pass
+                        other -> Fail (T.pack (Prelude.show other))
+                    )
+            other -> Prelude.pure (Fail (T.pack (Prelude.show other)))
+    test "parse/pattern_constructor_section_5_4" <|
+        case parseProgram "x <- case y of\n    Just n -> n" of
+            Prelude.Right (CProgram {programDecls = [CDValue v]}) ->
+                Prelude.pure
+                    ( case valueDeclBody v of
+                        CECase _ _ [CCaseArm {caseArmPattern = CPCon _ _ [_]}] -> Pass
+                        other -> Fail (T.pack (Prelude.show other))
+                    )
+            other -> Prelude.pure (Fail (T.pack (Prelude.show other)))
+    test "parse/pattern_record_short_section_5_4" <|
+        case parseProgram "x <- case y of\n    { name, score } -> name" of
+            Prelude.Right (CProgram {programDecls = [CDValue v]}) ->
+                Prelude.pure
+                    ( case valueDeclBody v of
+                        CECase _ _ [CCaseArm {caseArmPattern = CPRecord _ fields}] ->
+                            Prelude.length fields === 2
+                        other -> Fail (T.pack (Prelude.show other))
+                    )
+            other -> Prelude.pure (Fail (T.pack (Prelude.show other)))
+    test "parse/pattern_record_full_section_5_4" <|
+        case parseProgram "x <- case y of\n    { name = n } -> n" of
+            Prelude.Right (CProgram {programDecls = [CDValue v]}) ->
+                Prelude.pure
+                    ( case valueDeclBody v of
+                        CECase _ _ [CCaseArm {caseArmPattern = CPRecord _ [CRpfFull _ _ _]}] -> Pass
+                        other -> Fail (T.pack (Prelude.show other))
+                    )
+            other -> Prelude.pure (Fail (T.pack (Prelude.show other)))
+```
+
+</details>
+<!-- END tests:5_4 -->
+
 
 ---
 
@@ -866,6 +1777,29 @@ data Binding = Binding LowerName Expr
 into `ECase e1 [CaseArm (PCon "True" []) e2, CaseArm (PCon "False" []) e3]`
 during AST construction.
 
+<!-- BEGIN tests:6_4 -->
+**Tests** (1):
+
+- [`ast/paren_dropped_section_6_4`](https://github.com/quone-lang/compiler/blob/19830fa0a68e994f6062b7a0cab2894a70b566d5/tests/Test/AstTests.hs#L81)
+
+<details>
+<summary>Show test source</summary>
+
+```haskell
+    test "ast/paren_dropped_section_6_4" <|
+        case desugarSource "x <- (1 + 2)" of
+            Prelude.Right p -> case Prelude.head (programDecls p) of
+                DValue v -> case valueDeclBody v of
+                    EBinOp _ OpAdd _ _ -> Prelude.pure Pass
+                    other -> Prelude.pure (Fail (T.pack (Prelude.show other)))
+                _ -> Prelude.pure (Fail "first decl was not DValue")
+            other -> Prelude.pure (Fail (T.pack (Prelude.show other)))
+```
+
+</details>
+<!-- END tests:6_4 -->
+
+
 ### 6.5 Patterns
 
 ```haskell
@@ -908,6 +1842,29 @@ data Modifier
     | MWhere Expr             -- mutate_each (where ...)
     | MCols  [LowerName]      -- summarize_each (cols { ... })
 ```
+
+<!-- BEGIN tests:6_6 -->
+**Tests** (1):
+
+- [`ast/verb_keyword_translates_section_6_6`](https://github.com/quone-lang/compiler/blob/19830fa0a68e994f6062b7a0cab2894a70b566d5/tests/Test/AstTests.hs#L89)
+
+<details>
+<summary>Show test source</summary>
+
+```haskell
+    test "ast/verb_keyword_translates_section_6_6" <|
+        case desugarSource "x <- students |> filter (score > 70.0)" of
+            Prelude.Right p -> case Prelude.head (programDecls p) of
+                DValue v -> case valueDeclBody v of
+                    EPipe _ _ (EVerb _ VFilter _) -> Prelude.pure Pass
+                    other -> Prelude.pure (Fail (T.pack (Prelude.show other)))
+                _ -> Prelude.pure (Fail "first decl was not DValue")
+            other -> Prelude.pure (Fail (T.pack (Prelude.show other)))
+```
+
+</details>
+<!-- END tests:6_6 -->
+
 
 ### 6.7 Doc blocks
 
@@ -953,6 +1910,192 @@ enforced by the compiler before typing and lowering.
    structurally valid `EVerb` may still be rejected by typing.
 9. **No `EIf` constructor.** `if` expressions are desugared during AST
    construction (section 5.3) and MUST NOT appear in the AST.
+
+<!-- BEGIN tests:6_8 -->
+**Tests** (1):
+
+- [`resolve/collect_symbols_includes_constructors_section_6_8`](https://github.com/quone-lang/compiler/blob/19830fa0a68e994f6062b7a0cab2894a70b566d5/tests/Test/ResolveTests.hs#L214)
+
+<details>
+<summary>Show test source</summary>
+
+```haskell
+    test "resolve/collect_symbols_includes_constructors_section_6_8" <|
+        let
+            src =
+                T.unlines
+                    [ "type Maybe a"
+                    , "    <- Nothing"
+                    , "     | Just a"
+                    ]
+        in
+        case desugarSource src of
+            Prelude.Right p ->
+                let
+                    syms = collectSymbols p
+                in
+                Prelude.pure
+                    ( assert
+                        (Map.member "Maybe" (modulesymLocals syms)
+                            Prelude.&& Map.member "Just" (modulesymLocals syms)
+                            Prelude.&& Map.member "Nothing" (modulesymLocals syms)
+                        )
+                        "expected Maybe, Just, Nothing in symbol table"
+                    )
+            Prelude.Left d ->
+                Prelude.pure (Fail (T.pack (Prelude.show d)))
+```
+
+</details>
+<!-- END tests:6_8 -->
+
+<!-- BEGIN tests:6_8_inv2 -->
+**Tests** (3):
+
+- [`ast/validate_export_consistency_pos_section_6_8_inv2`](https://github.com/quone-lang/compiler/blob/19830fa0a68e994f6062b7a0cab2894a70b566d5/tests/Test/AstTests.hs#L114)
+- [`ast/validate_export_consistency_neg_section_6_8_inv2`](https://github.com/quone-lang/compiler/blob/19830fa0a68e994f6062b7a0cab2894a70b566d5/tests/Test/AstTests.hs#L130)
+- [`ast/validate_wildcard_export_skips_consistency_check_section_6_8_inv2`](https://github.com/quone-lang/compiler/blob/19830fa0a68e994f6062b7a0cab2894a70b566d5/tests/Test/AstTests.hs#L182)
+
+<details>
+<summary>Show test source</summary>
+
+```haskell
+    test "ast/validate_export_consistency_pos_section_6_8_inv2" <|
+        let
+            src = T.unlines
+                [ "module Foo exporting (x)"
+                , ""
+                , "x <- 1"
+                ]
+        in
+        case desugarSource src of
+            Prelude.Right p ->
+                Prelude.pure
+                    ( assert
+                        (Prelude.null (validate p))
+                        ("expected no diagnostics; got " Prelude.<> T.pack (Prelude.show (validate p)))
+                    )
+            other -> Prelude.pure (Fail (T.pack (Prelude.show other)))
+    test "ast/validate_export_consistency_neg_section_6_8_inv2" <|
+        let
+            src = T.unlines
+                [ "module Foo exporting (missing)"
+                , ""
+                , "x <- 1"
+                ]
+        in
+        case desugarSource src of
+            Prelude.Right p ->
+                Prelude.pure
+                    ( assert
+                        (Prelude.not (Prelude.null (validate p)))
+                        "expected a diagnostic about the missing export"
+                    )
+            other -> Prelude.pure (Fail (T.pack (Prelude.show other)))
+    test "ast/validate_wildcard_export_skips_consistency_check_section_6_8_inv2" <|
+        let
+            src = T.unlines
+                [ "module Foo exporting (..)"
+                , ""
+                , "x <- 1"
+                ]
+        in
+        case desugarSource src of
+            Prelude.Right p ->
+                Prelude.pure
+                    ( assert
+                        (Prelude.null (validate p))
+                        ("wildcard exports never fail consistency; got " Prelude.<> T.pack (Prelude.show (validate p)))
+                    )
+            other -> Prelude.pure (Fail (T.pack (Prelude.show other)))
+```
+
+</details>
+<!-- END tests:6_8_inv2 -->
+
+<!-- BEGIN tests:6_8_inv4 -->
+**Tests** (2):
+
+- [`ast/validate_r_export_discipline_pos_section_6_8_inv4`](https://github.com/quone-lang/compiler/blob/19830fa0a68e994f6062b7a0cab2894a70b566d5/tests/Test/AstTests.hs#L146)
+- [`ast/validate_r_export_discipline_neg_section_6_8_inv4`](https://github.com/quone-lang/compiler/blob/19830fa0a68e994f6062b7a0cab2894a70b566d5/tests/Test/AstTests.hs#L163)
+
+<details>
+<summary>Show test source</summary>
+
+```haskell
+    test "ast/validate_r_export_discipline_pos_section_6_8_inv4" <|
+        let
+            src = T.unlines
+                [ "module Foo exporting (x)"
+                , ""
+                , "#' @export"
+                , "x <- 1"
+                ]
+        in
+        case desugarSource src of
+            Prelude.Right p ->
+                Prelude.pure
+                    ( assert
+                        (Prelude.null (validate p))
+                        ("expected no diagnostics; got " Prelude.<> T.pack (Prelude.show (validate p)))
+                    )
+            other -> Prelude.pure (Fail (T.pack (Prelude.show other)))
+    test "ast/validate_r_export_discipline_neg_section_6_8_inv4" <|
+        let
+            src = T.unlines
+                [ "module Foo exporting (y)"
+                , ""
+                , "#' @export"
+                , "x <- 1"
+                , ""
+                , "y <- 2"
+                ]
+        in
+        case desugarSource src of
+            Prelude.Right p ->
+                Prelude.pure
+                    ( assert
+                        (Prelude.not (Prelude.null (validate p)))
+                        "expected a diagnostic about @export on a non-exported binding"
+                    )
+            other -> Prelude.pure (Fail (T.pack (Prelude.show other)))
+```
+
+</details>
+<!-- END tests:6_8_inv4 -->
+
+<!-- BEGIN tests:6_8_invariant_9 -->
+**Tests** (1):
+
+- [`ast/no_eif_constructor_section_6_8_invariant_9`](https://github.com/quone-lang/compiler/blob/19830fa0a68e994f6062b7a0cab2894a70b566d5/tests/Test/AstTests.hs#L66)
+
+<details>
+<summary>Show test source</summary>
+
+```haskell
+    test "ast/no_eif_constructor_section_6_8_invariant_9" <|
+        -- This is structurally guaranteed: the AST has no EIf
+        -- constructor. We assert the desugar produces a non-EIf shape.
+        case desugarSource "x <- if c then 1 else 2" of
+            Prelude.Right p -> case Prelude.head (programDecls p) of
+                DValue v ->
+                    Prelude.pure
+                        ( assert
+                            (case valueDeclBody v of
+                                ECase _ _ _ -> Prelude.True
+                                _ -> Prelude.False)
+                            "if must lower to ECase, never EIf"
+                        )
+                _ -> Prelude.pure (Fail "first decl was not DValue")
+            other -> Prelude.pure (Fail (T.pack (Prelude.show other)))
+```
+
+</details>
+<!-- END tests:6_8_invariant_9 -->
+
+
+
+
 
 ---
 
@@ -1030,6 +2173,23 @@ type Result a
      | Err Character
 ```
 
+<!-- BEGIN tests:7_5_1 -->
+**Tests** (1):
+
+- [`type/literal_logical_constructor_section_7_5_1`](https://github.com/quone-lang/compiler/blob/19830fa0a68e994f6062b7a0cab2894a70b566d5/tests/Test/TypeTests.hs#L65)
+
+<details>
+<summary>Show test source</summary>
+
+```haskell
+    test "type/literal_logical_constructor_section_7_5_1" <|
+        infersTo "x <- True" "x" "Logical"
+```
+
+</details>
+<!-- END tests:7_5_1 -->
+
+
 #### 7.5.1 Built-in types
 
 A small number of custom types are predefined by the language and always
@@ -1085,6 +2245,83 @@ Quone uses Hindley-Milner type inference. That means:
 - type annotations, when present, MUST be checked against the inferred type
   and the program is rejected on mismatch.
 
+<!-- BEGIN tests:8_1 -->
+**Tests** (6):
+
+- [`type/identity_lambda_section_8_1`](https://github.com/quone-lang/compiler/blob/19830fa0a68e994f6062b7a0cab2894a70b566d5/tests/Test/TypeTests.hs#L78)
+- [`type/curried_application_section_8_1`](https://github.com/quone-lang/compiler/blob/19830fa0a68e994f6062b7a0cab2894a70b566d5/tests/Test/TypeTests.hs#L90)
+- [`type/annotation_matches_section_8_1`](https://github.com/quone-lang/compiler/blob/19830fa0a68e994f6062b7a0cab2894a70b566d5/tests/Test/TypeTests.hs#L248)
+- [`type/annotation_mismatch_rejected_section_8_1`](https://github.com/quone-lang/compiler/blob/19830fa0a68e994f6062b7a0cab2894a70b566d5/tests/Test/TypeTests.hs#L257)
+- [`type/annotation_pins_operator_operands_section_8_1`](https://github.com/quone-lang/compiler/blob/19830fa0a68e994f6062b7a0cab2894a70b566d5/tests/Test/TypeTests.hs#L268)
+- [`type/annotation_pins_param_types_in_body_section_8_1`](https://github.com/quone-lang/compiler/blob/19830fa0a68e994f6062b7a0cab2894a70b566d5/tests/Test/TypeTests.hs#L280)
+
+<details>
+<summary>Show test source</summary>
+
+```haskell
+    test "type/identity_lambda_section_8_1" <|
+        -- \x -> x : forall a. a -> a (printed as variable -> variable)
+        case infer "id <- \\x -> x" of
+            Prelude.Right binds -> case Map.lookup "id" binds of
+                Just sch ->
+                    Prelude.pure
+                        ( assert
+                            (T.isInfixOf "->" (showScheme sch))
+                            ("expected an arrow type; got " Prelude.<> showScheme sch)
+                        )
+                Nothing -> Prelude.pure (Fail "no binding for id")
+            Prelude.Left d -> Prelude.pure (Fail (T.pack (Prelude.show d)))
+    test "type/curried_application_section_8_1" <|
+        infersTo "x <- (\\a b -> a) 1L 2L" "x" "Integer"
+    test "type/annotation_matches_section_8_1" <|
+        case infer
+            ( T.unlines
+                [ "x : Integer"
+                , "x <- 1L"
+                ]
+            ) of
+            Prelude.Right _ -> Prelude.pure Pass
+            Prelude.Left d -> Prelude.pure (Fail (T.pack (Prelude.show d)))
+    test "type/annotation_mismatch_rejected_section_8_1" <|
+        Prelude.pure
+            ( assertLeft
+                ( infer
+                    ( T.unlines
+                        [ "x : Integer"
+                        , "x <- \"oops\""
+                        ]
+                    )
+                )
+            )
+    test "type/annotation_pins_operator_operands_section_8_1" <|
+        -- Without annotation flow this would fail (`/ : Double -> Double
+        -- -> Double` can't infer the types of two unconstrained vars).
+        -- The annotation makes both `max_score` and `raw` Double.
+        infersTo
+            ( T.unlines
+                [ "normalize : Double -> Double -> Double"
+                , "normalize max_score raw <- raw / max_score"
+                ]
+            )
+            "normalize"
+            "Double -> Double -> Double"
+    test "type/annotation_pins_param_types_in_body_section_8_1" <|
+        Prelude.pure
+            ( assertLeft
+                ( infer
+                    ( T.unlines
+                        [ "f : Integer -> Integer"
+                        , "f x <- x + 1.0"
+                        ]
+                    )
+                )
+            )
+```
+
+</details>
+<!-- END tests:8_1 -->
+
+
 ### 8.2 Built-in environment
 
 The initial typing environment includes built-ins such as:
@@ -1105,6 +2342,33 @@ let
 in
     double 21
 ```
+
+<!-- BEGIN tests:8_3 -->
+**Tests** (1):
+
+- [`type/let_generalisation_section_8_3`](https://github.com/quone-lang/compiler/blob/19830fa0a68e994f6062b7a0cab2894a70b566d5/tests/Test/TypeTests.hs#L94)
+
+<details>
+<summary>Show test source</summary>
+
+```haskell
+    test "type/let_generalisation_section_8_3" <|
+        -- let id <- \x -> x in (id 1, id "hi") would need tuples; we
+        -- approximate by checking that a let-bound id can be applied
+        -- to two different concrete types via two top-level uses.
+        case infer
+            ( T.unlines
+                [ "first <- (let f <- \\x -> x in f 1L)"
+                , "second <- (let f <- \\x -> x in f \"hi\")"
+                ]
+            ) of
+            Prelude.Right _ -> Prelude.pure Pass
+            Prelude.Left d -> Prelude.pure (Fail (T.pack (Prelude.show d)))
+```
+
+</details>
+<!-- END tests:8_3 -->
+
 
 ### 8.4 Pattern matching
 
@@ -1138,6 +2402,54 @@ guarantee. Implementations SHOULD warn on non-exhaustive matches and MAY
 generate a runtime trap for unmatched values; see
 [section 19](#19-open-questions-and-future-work).
 
+<!-- BEGIN tests:8_4 -->
+**Tests** (3):
+
+- [`type/case_wildcard_section_8_4`](https://github.com/quone-lang/compiler/blob/19830fa0a68e994f6062b7a0cab2894a70b566d5/tests/Test/TypeTests.hs#L173)
+- [`type/case_constructor_section_8_4`](https://github.com/quone-lang/compiler/blob/19830fa0a68e994f6062b7a0cab2894a70b566d5/tests/Test/TypeTests.hs#L182)
+- [`type/case_arms_must_unify_section_8_4`](https://github.com/quone-lang/compiler/blob/19830fa0a68e994f6062b7a0cab2894a70b566d5/tests/Test/TypeTests.hs#L192)
+
+<details>
+<summary>Show test source</summary>
+
+```haskell
+    test "type/case_wildcard_section_8_4" <|
+        infersTo
+            ( T.unlines
+                [ "x <- case 1L of"
+                , "    _ -> 42L"
+                ]
+            )
+            "x"
+            "Integer"
+    test "type/case_constructor_section_8_4" <|
+        infersTo
+            ( T.unlines
+                [ "x <- case Just 1L of"
+                , "    Just n -> n"
+                , "    Nothing -> 0L"
+                ]
+            )
+            "x"
+            "Integer"
+    test "type/case_arms_must_unify_section_8_4" <|
+        Prelude.pure
+            ( assertLeft
+                ( infer
+                    ( T.unlines
+                        [ "x <- case 1L of"
+                        , "    1L -> 1L"
+                        , "    _ -> \"oops\""
+                        ]
+                    )
+                )
+            )
+```
+
+</details>
+<!-- END tests:8_4 -->
+
+
 ### 8.5 Records and field access
 
 Field access requires a record-typed expression and the named field MUST
@@ -1158,6 +2470,44 @@ rejected. The diagnostic SHOULD point the user at
 record-update form is for record values only; column updates on dataframes
 go through `mutate` so that row scope and verb-specific typing
 ([section 8.7](#87-dataframe-pipeline-typing)) apply.
+
+<!-- BEGIN tests:8_5 -->
+**Tests** (4):
+
+- [`type/record_field_access_section_8_5`](https://github.com/quone-lang/compiler/blob/19830fa0a68e994f6062b7a0cab2894a70b566d5/tests/Test/TypeTests.hs#L217)
+- [`type/record_unknown_field_rejected_section_8_5`](https://github.com/quone-lang/compiler/blob/19830fa0a68e994f6062b7a0cab2894a70b566d5/tests/Test/TypeTests.hs#L222)
+- [`type/record_update_section_8_5`](https://github.com/quone-lang/compiler/blob/19830fa0a68e994f6062b7a0cab2894a70b566d5/tests/Test/TypeTests.hs#L227)
+- [`type/record_update_wrong_field_rejected_section_8_5`](https://github.com/quone-lang/compiler/blob/19830fa0a68e994f6062b7a0cab2894a70b566d5/tests/Test/TypeTests.hs#L232)
+
+<details>
+<summary>Show test source</summary>
+
+```haskell
+    test "type/record_field_access_section_8_5" <|
+        infersTo
+            "x <- { a = 1L }.a"
+            "x"
+            "Integer"
+    test "type/record_unknown_field_rejected_section_8_5" <|
+        Prelude.pure
+            ( assertLeft
+                (infer "x <- { a = 1L }.b")
+            )
+    test "type/record_update_section_8_5" <|
+        infersTo
+            "x <- { { a = 1L } | a = 2L }"
+            "x"
+            "{ a : Integer }"
+    test "type/record_update_wrong_field_rejected_section_8_5" <|
+        Prelude.pure
+            ( assertLeft
+                (infer "x <- { { a = 1L } | b = 2L }")
+            )
+```
+
+</details>
+<!-- END tests:8_5 -->
+
 
 ### 8.6 Dataframes
 
@@ -1192,6 +2542,123 @@ The remaining verbs reserved in
 `[planned]` for a later revision. A conforming v0.0.1 implementation MAY
 implement them as ordinary lowering passthroughs to `dplyr` without
 column-level type checking.
+
+<!-- BEGIN tests:8_7 -->
+**Tests** (10):
+
+- [`verb/select_keeps_named_columns_section_8_7`](https://github.com/quone-lang/compiler/blob/19830fa0a68e994f6062b7a0cab2894a70b566d5/tests/Test/VerbTests.hs#L59)
+- [`verb/select_unknown_column_rejected_section_8_7`](https://github.com/quone-lang/compiler/blob/19830fa0a68e994f6062b7a0cab2894a70b566d5/tests/Test/VerbTests.hs#L72)
+- [`verb/filter_predicate_must_be_logical_section_8_7`](https://github.com/quone-lang/compiler/blob/19830fa0a68e994f6062b7a0cab2894a70b566d5/tests/Test/VerbTests.hs#L98)
+- [`verb/filter_unknown_column_rejected_section_8_7`](https://github.com/quone-lang/compiler/blob/19830fa0a68e994f6062b7a0cab2894a70b566d5/tests/Test/VerbTests.hs#L105)
+- [`verb/mutate_extends_schema_section_8_7`](https://github.com/quone-lang/compiler/blob/19830fa0a68e994f6062b7a0cab2894a70b566d5/tests/Test/VerbTests.hs#L123)
+- [`verb/summarize_replaces_schema_section_8_7`](https://github.com/quone-lang/compiler/blob/19830fa0a68e994f6062b7a0cab2894a70b566d5/tests/Test/VerbTests.hs#L148)
+- [`verb/group_by_keeps_schema_section_8_7`](https://github.com/quone-lang/compiler/blob/19830fa0a68e994f6062b7a0cab2894a70b566d5/tests/Test/VerbTests.hs#L173)
+- [`verb/group_by_unknown_column_rejected_section_8_7`](https://github.com/quone-lang/compiler/blob/19830fa0a68e994f6062b7a0cab2894a70b566d5/tests/Test/VerbTests.hs#L181)
+- [`verb/arrange_with_record_keeps_schema_section_8_7`](https://github.com/quone-lang/compiler/blob/19830fa0a68e994f6062b7a0cab2894a70b566d5/tests/Test/VerbTests.hs#L199)
+- [`verb/arrange_with_desc_modifier_section_8_7`](https://github.com/quone-lang/compiler/blob/19830fa0a68e994f6062b7a0cab2894a70b566d5/tests/Test/VerbTests.hs#L207)
+
+<details>
+<summary>Show test source</summary>
+
+```haskell
+    test "verb/select_keeps_named_columns_section_8_7" <|
+        case infer (studentsDf ++ "y <- students |> select { name }") of
+            Prelude.Right binds -> case Map.lookup "y" binds of
+                Just sch -> case schemeBody sch of
+                    TyDataframe fs ->
+                        Prelude.pure
+                            ( assert
+                                (Map.keysSet fs Prelude.== Map.keysSet (Map.singleton "name" ()))
+                                ("expected schema {name}; got " Prelude.<> showType (TyDataframe fs))
+                            )
+                    other -> Prelude.pure (Fail (T.pack (Prelude.show other)))
+                Nothing -> Prelude.pure (Fail "no binding y")
+            Prelude.Left msg -> Prelude.pure (Fail msg)
+    test "verb/select_unknown_column_rejected_section_8_7" <|
+        Prelude.pure
+            ( assertLeft
+                ( inferRaw
+                    (studentsDf ++ "y <- students |> select { missing }")
+                )
+            )
+    test "verb/filter_predicate_must_be_logical_section_8_7" <|
+        Prelude.pure
+            ( assertLeft
+                ( inferRaw
+                    (studentsDf ++ "y <- students |> filter (score)")
+                )
+            )
+    test "verb/filter_unknown_column_rejected_section_8_7" <|
+        Prelude.pure
+            ( assertLeft
+                ( inferRaw
+                    (studentsDf ++ "y <- students |> filter (notACol > 70.0)")
+                )
+            )
+    test "verb/mutate_extends_schema_section_8_7" <|
+        case infer
+            (studentsDf ++ "y <- students |> mutate { pct = score / 100.0 }") of
+            Prelude.Right binds -> case Map.lookup "y" binds of
+                Just sch -> case schemeBody sch of
+                    TyDataframe fs ->
+                        Prelude.pure
+                            ( assert
+                                (Map.member "pct" fs Prelude.&& Map.member "score" fs)
+                                ("expected pct + original cols; got " Prelude.<> showType (TyDataframe fs))
+                            )
+                    other -> Prelude.pure (Fail (T.pack (Prelude.show other)))
+                Nothing -> Prelude.pure (Fail "no binding y")
+            Prelude.Left msg -> Prelude.pure (Fail msg)
+    test "verb/summarize_replaces_schema_section_8_7" <|
+        case infer
+            (studentsDf ++ "y <- students |> summarize { avg = mean score }") of
+            Prelude.Right binds -> case Map.lookup "y" binds of
+                Just sch -> case schemeBody sch of
+                    TyDataframe fs ->
+                        Prelude.pure
+                            ( assert
+                                (Map.keysSet fs Prelude.== Map.keysSet (Map.singleton "avg" ()))
+                                ("expected only {avg}; got " Prelude.<> showType (TyDataframe fs))
+                            )
+                    other -> Prelude.pure (Fail (T.pack (Prelude.show other)))
+                Nothing -> Prelude.pure (Fail "no binding y")
+            Prelude.Left msg -> Prelude.pure (Fail msg)
+    test "verb/group_by_keeps_schema_section_8_7" <|
+        case infer (studentsDf ++ "y <- students |> group_by { dept }") of
+            Prelude.Right binds -> case Map.lookup "y" binds of
+                Just sch -> case schemeBody sch of
+                    TyDataframe _ -> Prelude.pure Pass
+                    other -> Prelude.pure (Fail (T.pack (Prelude.show other)))
+                Nothing -> Prelude.pure (Fail "no binding y")
+            Prelude.Left msg -> Prelude.pure (Fail msg)
+    test "verb/group_by_unknown_column_rejected_section_8_7" <|
+        Prelude.pure
+            ( assertLeft
+                ( inferRaw
+                    (studentsDf ++ "y <- students |> group_by { missing }")
+                )
+            )
+    test "verb/arrange_with_record_keeps_schema_section_8_7" <|
+        case infer (studentsDf ++ "y <- students |> arrange { score }") of
+            Prelude.Right binds -> case Map.lookup "y" binds of
+                Just sch -> case schemeBody sch of
+                    TyDataframe _ -> Prelude.pure Pass
+                    other -> Prelude.pure (Fail (T.pack (Prelude.show other)))
+                Nothing -> Prelude.pure (Fail "no binding y")
+            Prelude.Left msg -> Prelude.pure (Fail msg)
+    test "verb/arrange_with_desc_modifier_section_8_7" <|
+        case infer (studentsDf ++ "y <- students |> arrange (desc score)") of
+            Prelude.Right binds -> case Map.lookup "y" binds of
+                Just sch -> case schemeBody sch of
+                    TyDataframe _ -> Prelude.pure Pass
+                    other -> Prelude.pure (Fail (T.pack (Prelude.show other)))
+                Nothing -> Prelude.pure (Fail "no binding y")
+            Prelude.Left msg -> Prelude.pure (Fail msg)
+```
+
+</details>
+<!-- END tests:8_7 -->
+
 
 ### 8.8 Arithmetic and comparison operators
 
@@ -1286,6 +2753,82 @@ Defaulting only fires when an operand is *fully* unconstrained.
 Concrete operands always pin via the existing operator typing rules
 above, with no defaulting involved.
 
+<!-- BEGIN tests:8_8 -->
+**Tests** (17):
+
+- [`type/op_add_int_int_int_section_8_8`](https://github.com/quone-lang/compiler/blob/19830fa0a68e994f6062b7a0cab2894a70b566d5/tests/Test/TypeTests.hs#L117)
+- [`type/op_add_bare_digits_default_to_double_section_8_8`](https://github.com/quone-lang/compiler/blob/19830fa0a68e994f6062b7a0cab2894a70b566d5/tests/Test/TypeTests.hs#L119)
+- [`type/op_add_dbl_dbl_dbl_section_8_8`](https://github.com/quone-lang/compiler/blob/19830fa0a68e994f6062b7a0cab2894a70b566d5/tests/Test/TypeTests.hs#L123)
+- [`type/op_mixed_int_dbl_rejected_section_8_8`](https://github.com/quone-lang/compiler/blob/19830fa0a68e994f6062b7a0cab2894a70b566d5/tests/Test/TypeTests.hs#L125)
+- [`type/op_intdiv_int_only_section_8_8`](https://github.com/quone-lang/compiler/blob/19830fa0a68e994f6062b7a0cab2894a70b566d5/tests/Test/TypeTests.hs#L129)
+- [`type/op_intdiv_double_rejected_section_8_8`](https://github.com/quone-lang/compiler/blob/19830fa0a68e994f6062b7a0cab2894a70b566d5/tests/Test/TypeTests.hs#L131)
+- [`type/op_mod_int_only_section_8_8`](https://github.com/quone-lang/compiler/blob/19830fa0a68e994f6062b7a0cab2894a70b566d5/tests/Test/TypeTests.hs#L133)
+- [`type/op_caret_double_only_section_8_8`](https://github.com/quone-lang/compiler/blob/19830fa0a68e994f6062b7a0cab2894a70b566d5/tests/Test/TypeTests.hs#L135)
+- [`type/op_caret_int_rejected_section_8_8`](https://github.com/quone-lang/compiler/blob/19830fa0a68e994f6062b7a0cab2894a70b566d5/tests/Test/TypeTests.hs#L137)
+- [`type/op_unary_neg_int_section_8_8`](https://github.com/quone-lang/compiler/blob/19830fa0a68e994f6062b7a0cab2894a70b566d5/tests/Test/TypeTests.hs#L141)
+- [`type/op_unary_neg_double_section_8_8`](https://github.com/quone-lang/compiler/blob/19830fa0a68e994f6062b7a0cab2894a70b566d5/tests/Test/TypeTests.hs#L143)
+- [`type/op_eq_returns_logical_section_8_8`](https://github.com/quone-lang/compiler/blob/19830fa0a68e994f6062b7a0cab2894a70b566d5/tests/Test/TypeTests.hs#L145)
+- [`type/op_lt_mixed_rejected_section_8_8`](https://github.com/quone-lang/compiler/blob/19830fa0a68e994f6062b7a0cab2894a70b566d5/tests/Test/TypeTests.hs#L147)
+- [`type/op_eq_string_returns_logical_section_8_8`](https://github.com/quone-lang/compiler/blob/19830fa0a68e994f6062b7a0cab2894a70b566d5/tests/Test/TypeTests.hs#L149)
+- [`type/op_unconstrained_add_defaults_to_double_section_8_8`](https://github.com/quone-lang/compiler/blob/19830fa0a68e994f6062b7a0cab2894a70b566d5/tests/Test/TypeTests.hs#L156)
+- [`type/op_unconstrained_compare_defaults_to_double_section_8_8`](https://github.com/quone-lang/compiler/blob/19830fa0a68e994f6062b7a0cab2894a70b566d5/tests/Test/TypeTests.hs#L158)
+- [`type/op_unconstrained_caret_defaults_to_double_section_8_8`](https://github.com/quone-lang/compiler/blob/19830fa0a68e994f6062b7a0cab2894a70b566d5/tests/Test/TypeTests.hs#L160)
+
+<details>
+<summary>Show test source</summary>
+
+```haskell
+    test "type/op_add_int_int_int_section_8_8" <|
+        infersTo "x <- 1L + 2L" "x" "Integer"
+    test "type/op_add_bare_digits_default_to_double_section_8_8" <|
+        -- Bare `1 + 2` is `Double + Double = Double` because bare
+        -- digit literals are doubles.
+        infersTo "x <- 1 + 2" "x" "Double"
+    test "type/op_add_dbl_dbl_dbl_section_8_8" <|
+        infersTo "x <- 1.0 + 2.0" "x" "Double"
+    test "type/op_mixed_int_dbl_rejected_section_8_8" <|
+        -- `1L` is Integer, `2.0` is Double - mixed primitives still
+        -- a type error (no implicit coercion).
+        Prelude.pure (assertLeft (infer "x <- 1L + 2.0"))
+    test "type/op_intdiv_int_only_section_8_8" <|
+        infersTo "x <- 10L // 3L" "x" "Integer"
+    test "type/op_intdiv_double_rejected_section_8_8" <|
+        Prelude.pure (assertLeft (infer "x <- 10.0 // 3.0"))
+    test "type/op_mod_int_only_section_8_8" <|
+        infersTo "x <- 10L % 3L" "x" "Integer"
+    test "type/op_caret_double_only_section_8_8" <|
+        infersTo "x <- 2.0 ^ 3.0" "x" "Double"
+    test "type/op_caret_int_rejected_section_8_8" <|
+        -- `2L ^ 3L` is Integer ^ Integer; `^` requires both sides to
+        -- be Double, so this is rejected.
+        Prelude.pure (assertLeft (infer "x <- 2L ^ 3L"))
+    test "type/op_unary_neg_int_section_8_8" <|
+        infersTo "x <- -5L" "x" "Integer"
+    test "type/op_unary_neg_double_section_8_8" <|
+        infersTo "x <- -5.0" "x" "Double"
+    test "type/op_eq_returns_logical_section_8_8" <|
+        infersTo "x <- 1L == 2L" "x" "Logical"
+    test "type/op_lt_mixed_rejected_section_8_8" <|
+        Prelude.pure (assertLeft (infer "x <- 1L < 2.0"))
+    test "type/op_eq_string_returns_logical_section_8_8" <|
+        infersTo "x <- \"a\" == \"b\"" "x" "Logical"
+      -- Numeric defaulting (LANGUAGE.md section 8.8): an unannotated
+      -- top-level binding whose body uses arithmetic on unconstrained
+      -- operands has those operands defaulted to Double, matching R's
+      -- bare-numeric default. This is what makes the natural shape
+      -- @add a b <- a + b@ usable without an annotation.
+    test "type/op_unconstrained_add_defaults_to_double_section_8_8" <|
+        infersTo "add a b <- a + b" "add" "Double -> Double -> Double"
+    test "type/op_unconstrained_compare_defaults_to_double_section_8_8" <|
+        infersTo "ge a b <- a >= b" "ge" "Double -> Double -> Logical"
+    test "type/op_unconstrained_caret_defaults_to_double_section_8_8" <|
+        infersTo "square x <- x ^ x" "square" "Double -> Double"
+```
+
+</details>
+<!-- END tests:8_8 -->
+
+
 ---
 
 ## 9. Dataframe manipulation
@@ -1346,6 +2889,29 @@ students |> filter (\row -> row.score > 70.0)
 Both forms MUST be valid. The sugared form gives a concise dplyr-like
 syntax; the explicit lambda form is the precise escape hatch for advanced
 logic and is the form referenced by the typing rules.
+
+<!-- BEGIN tests:9_2 -->
+**Tests** (1):
+
+- [`verb/filter_predicate_uses_row_scope_section_9_2`](https://github.com/quone-lang/compiler/blob/19830fa0a68e994f6062b7a0cab2894a70b566d5/tests/Test/VerbTests.hs#L90)
+
+<details>
+<summary>Show test source</summary>
+
+```haskell
+    test "verb/filter_predicate_uses_row_scope_section_9_2" <|
+        case infer (studentsDf ++ "y <- students |> filter (score > 70.0)") of
+            Prelude.Right binds -> case Map.lookup "y" binds of
+                Just sch -> case schemeBody sch of
+                    TyDataframe _ -> Prelude.pure Pass
+                    other -> Prelude.pure (Fail (T.pack (Prelude.show other)))
+                Nothing -> Prelude.pure (Fail "no binding y")
+            Prelude.Left msg -> Prelude.pure (Fail msg)
+```
+
+</details>
+<!-- END tests:9_2 -->
+
 
 ### 9.3 Verb-specific scope rules
 
@@ -1527,6 +3093,23 @@ A conforming implementation MUST recognise the following error categories:
 Each error category SHOULD include enough information for a user to locate
 the source of the failure.
 
+<!-- BEGIN tests:12_1 -->
+**Tests** (1):
+
+- [`type/unbound_variable_rejected_section_12_1`](https://github.com/quone-lang/compiler/blob/19830fa0a68e994f6062b7a0cab2894a70b566d5/tests/Test/TypeTests.hs#L92)
+
+<details>
+<summary>Show test source</summary>
+
+```haskell
+    test "type/unbound_variable_rejected_section_12_1" <|
+        Prelude.pure (assertLeft (infer "x <- y"))
+```
+
+</details>
+<!-- END tests:12_1 -->
+
+
 ### 12.2 Runtime file and decode failures
 
 Loading a real file from disk is a runtime effect. A Quone program cannot
@@ -1586,399 +3169,28 @@ This preserves the goal that generated R remains familiar and maintainable.
 
 ## 13. Translation to R
 
-Quone does not define an independent runtime semantics first and then lower
-later. Its practical semantics are given by translation to R. A future
-revision MUST give both:
+Moved to [COMPILATION.md section 1: Translation to R](COMPILATION.md#1-translation-to-r).
 
-1. a source-level meaning, and
-2. the required translation to R.
+Section 13 contained the normative lowering rules from Quone source to
+R: primitive mappings, operator mappings, function-call shape,
+higher-order operations on `Vector a`, pipes, custom types, pattern
+matching, records, dataframe verbs, and foreign R bindings. They now
+live in `COMPILATION.md` so the language proper (this file) stays
+focused on lex, syntax, types, and semantics.
 
-For v0.0.1, the translation rules below are normative.
-
-### 13.1 Compilation target
-
-Quone compiles to R source code.
-
-### 13.2 Primitive mappings
-
-| Quone        | R                                                |
-| ------------ | ------------------------------------------------ |
-| `Integer`    | R integer                                        |
-| `Double`     | R double                                         |
-| `Logical`    | R logical                                        |
-| `Character`  | R character                                      |
-| `Vector a`   | atomic vector when `a` is primitive; R `list` otherwise |
-| record       | named list                                       |
-| dataframe    | `data.frame`                                     |
-
-`Vector a` lowers to an R atomic vector (built with `c(...)`) when `a` is
-one of the primitive types `Integer`, `Double`, `Logical`, or `Character`.
-For any other element type - records, custom types, nested vectors - it
-lowers to an R `list` (built with `list(...)`), because R has no atomic
-representation for non-atomic elements.
-
-This split also affects how higher-order operations on `Vector a` are
-emitted; see [section 13.3.2](#1332-higher-order-operations-on-vector-a).
-
-### 13.2.1 Operator mappings
-
-The arithmetic, comparison, and structural operators lower to R as
-follows. Operators not listed share the same spelling between Quone and R.
-
-| Quone | R     | Notes                                  |
-| ----- | ----- | -------------------------------------- |
-| `+`   | `+`   |                                        |
-| `-`   | `-`   | Both binary and unary.                 |
-| `*`   | `*`   |                                        |
-| `/`   | `/`   |                                        |
-| `//`  | `%/%` | Integer division.                      |
-| `%`   | `%%`  | Modulo (integer).                      |
-| `^`   | `^`   | Exponentiation, right-associative.     |
-| `==`  | `==`  |                                        |
-| `!=`  | `!=`  |                                        |
-| `>`   | `>`   |                                        |
-| `<`   | `<`   |                                        |
-| `>=`  | `>=`  |                                        |
-| `<=`  | `<=`  |                                        |
-| `\|>` | `\|>` | R's native pipe (R >= 4.1).            |
-| `.`   | `$`   | Field access; see [section 13.7](#137-records-and-field-access). |
-
-### 13.3 Functions
-
-A Quone lambda or top-level function compiles to an R `function(...) { ... }`.
-
-Quone is curried, but a fully-applied call MUST lower to a single
-multi-argument R call rather than a chain of single-argument applications.
-For example, `add 1 2` lowers to `add(1, 2)`, not `(add(1))(2)`. Partial
-applications lower to R closures that capture the supplied arguments and
-accept the remaining ones.
-
-#### 13.3.1 Argument passing
-
-The generator selects between positional and named R arguments based on the
-kind of function being called. The intent is for generated R to look the
-way an idiomatic R developer would write it (design principle 7 in
-[section 1.2](#12-design-principles)).
-
-| Call site                         | R call style              |
-| --------------------------------- | ------------------------- |
-| Quone-defined function            | positional                |
-| Anonymous lambda or partial call  | positional                |
-| Imported R function (default)     | positional                |
-| Imported R function with declared parameter names | named         |
-| Dataframe verbs ([section 13.8](#138-dataframe-verbs)) | named (per dplyr API) |
-| Selected prelude/source helpers (e.g. `Csv.read`) | named, per their declarations |
-
-For v0.0.1 the simplest conforming policy is **positional everywhere
-except dataframe verbs and explicitly-marked imports**. Richer named-
-argument emission for general user functions is `[planned]` and depends on
-a future record-style argument syntax.
-
-#### 13.3.2 Higher-order operations on `Vector a`
-
-The generator SHOULD prefer `purrr` for higher-order operations on
-`Vector a` whenever an idiomatic equivalent exists. `purrr`'s public API
-maps closely onto Quone's prelude names from
-[section 8.2](#82-built-in-environment), so the lowering is mostly a
-`prefix::` rename.
-
-| Quone prelude / form           | `purrr` equivalent (typical)                                                              |
-| ------------------------------ | ----------------------------------------------------------------------------------------- |
-| `map`                          | `purrr::map` for non-atomic; `purrr::map_dbl` / `map_int` / `map_chr` / `map_lgl` for typed atomic outputs |
-| `map2`                         | `purrr::map2` and its typed variants                                                      |
-| `reduce`                       | `purrr::reduce`                                                                           |
-| `keep`                         | `purrr::keep`                                                                             |
-| `discard`                      | `purrr::discard`                                                                          |
-| record update `{ r \| ... }`   | `purrr::list_modify` (see [section 13.7](#137-records-and-field-access))                  |
-
-Two exceptions where `purrr` SHOULD NOT be used, because base R is more
-idiomatic and faster:
-
-- **Vectorised arithmetic and comparison** on atomic vectors, e.g.
-  `map (\x -> x + 1) xs` for `xs : Vector Double` SHOULD lower to `xs + 1`
-  (or the equivalent vectorised form) rather than
-  `purrr::map_dbl(xs, ~ . + 1)`.
-- **Construction** of an atomic `Vector a` from element expressions SHOULD
-  lower to `c(...)`, not to a `purrr::map` over an index range.
-
-When neither base R nor `purrr` provides a clean equivalent, the
-generator MAY fall back to other idiomatic R forms; this is `[planned]`
-for full normative treatment.
-
-### 13.4 Pipes
-
-Quone `|>` compiles to R native `|>`.
-
-### 13.5 Custom types
-
-Constructors compile to R constructor functions that build tagged list-like
-values. The exact tag representation is left to the implementation but MUST
-be deterministic and stable across compilations.
-
-### 13.6 Pattern matching
-
-Pattern matching compiles to a local binding plus an `if` / `else if` chain
-over constructor tags and literal checks.
-
-For each pattern kind:
-
-- **Wildcard and variable patterns** match unconditionally; a variable
-  pattern additionally introduces a binding.
-- **Integer / double / character literal patterns** lower to `==`
-  comparisons against the literal value.
-- **Constructor patterns** dispatch on the constructor tag, then bind any
-  argument patterns by recursive lowering against the constructor's
-  payload positions.
-- **Record patterns** lower to local `$`-access bindings inside the
-  arm body. `{ name, score } -> body` becomes
-  `name <- scrutinee$name; score <- scrutinee$score; ...body...`. The
-  longer form `{ name = n, score = s } -> body` binds to the chosen
-  names instead of the field names.
-
-As an optimisation, when a `case` matches on a `Logical` scrutinee with
-exactly the two arms `True -> a` and `False -> b` (in either order), the
-generator SHOULD emit R's native `if (cond) a else b` instead of a
-constructor-tag chain. This shape is what
-[section 5.3](#53-surface-only-forms)'s `if`-desugaring produces, so
-ordinary Quone `if` expressions still lower to ordinary R `if`.
-
-### 13.7 Records and field access
-
-Record field access compiles to `$` access in R.
-
-A record-update expression `{ r | f1 = v1, ..., fn = vn }`
-([section 8.5](#85-records-and-field-access)) lowers to
-`purrr::list_modify(r, f1 = v1, ..., fn = vn)`. `purrr::list_modify`
-returns a new named list with the listed entries replaced and all other
-entries preserved, which matches the Elm-style functional update
-semantics exactly.
-
-### 13.8 Dataframe verbs
-
-Dataframe verb nodes compile to `dplyr::verb(...)` calls.
-
-### 13.9 Foreign R bindings and runtime dependencies
-
-Quone v0.0.1 has no `library` declaration. The runtime dependency set of
-a compiled program is computed by the compiler from observed usage:
-
-| Source                                            | Implied R package |
-| ------------------------------------------------- | ----------------- |
-| Any dataframe verb ([section 9](#9-dataframe-manipulation)) | `dplyr` |
-| Higher-order ops on `Vector a` lowering via [section 13.3.2](#1332-higher-order-operations-on-vector-a) | `purrr` |
-| `Csv.*` and other source-loading prelude calls ([section 11](#11-file-loading-and-decoding)) | `readr` |
-| `import pkg.fn : ...` declarations                | `pkg`             |
-
-**Foreign function imports.** A foreign R import (see
-[section 4.5](#45-imports)) carries the R namespace as the lowercase
-prefix of its path; the prefix contributes to the runtime dependency
-set.
-
-```quone
-import readr.read_csv : Character -> dataframe { name : Vector Character }
-import data.table.fread : Character -> dataframe { name : Vector Character }
-import sqrt : Double -> Double                         (* base R *)
-```
-
-Calls to a prefixed import lower to the corresponding `pkg::fn(...)` form
-(`readr::read_csv(...)`, `data.table::fread(...)`). Imports with no
-prefix are treated as base R and emit unqualified calls (`sqrt(...)`).
-
-Quone module imports (Section 4.5) do not contribute to the runtime
-dependency set: they reference functions defined elsewhere in the same
-project's R package, which already lives in `R/` next to the calling
-module.
-
-**Emission of dependencies.** In script mode, the generator MUST ensure
-every required package is reachable. Two options are conforming, and
-generators MAY pick either consistently:
-
-- emit `pkg::fn(...)` qualifications throughout and no `library(pkg)`
-  calls; or
-- emit `library(pkg)` calls at the top of the output and use unqualified
-  names where unambiguous.
-
-Per the "boring R" goal in [section 1.2](#12-design-principles), the
-qualified form is preferred; it makes the source of every call visible
-without a global attached-namespace state.
-
-In package mode (see [section 14](#14-project-model-and-package-generation)),
-the dependency set MUST be written into the generated `DESCRIPTION` file's
-`Imports` field rather than emitted as `library(...)` calls.
+Subsection cross-references that used to point at `#13X` anchors here
+should be redirected to the equivalent `#1X` anchor in
+`COMPILATION.md`.
 
 ---
 
 ## 14. Project model and package generation
 
-This section distinguishes the **language**, the **compiler output
-model**, and the **project layout**.
+Moved to [COMPILATION.md section 2: Project model and package generation](COMPILATION.md#2-project-model-and-package-generation).
 
-### 14.1 Package-compatible by design, not package-only
-
-Every Quone project MUST be designed so it can compile cleanly to an R
-package, but v0.0.1 MUST NOT require every project to emit a package.
-
-The compiler MUST support two first-class output modes:
-
-- **script mode**: compile Quone source to readable `.R`;
-- **package mode**: generate an R package when requested.
-
-This keeps the language easy to try for small examples, scripts, and
-analyses while still making packaging a natural path for reusable code.
-
-### 14.2 Why package generation matters
-
-Package output is especially valuable for:
-
-- reusable libraries
-- exports and namespace management
-- documentation generation
-- tests
-- multi-file projects with stable module boundaries
-- distribution and installation
-
-Therefore package generation MUST be a first-class and well-supported
-compiler mode in v0.0.1.
-
-### 14.3 Why package generation is not mandatory in v0.0.1
-
-Mandatory package generation would add unnecessary ceremony for:
-
-- single-file programs
-- analysis scripts
-- small prototypes
-- REPL-driven exploration
-- early language adoption
-
-Quone's first release MUST preserve the direct experience of compiling
-Quone source to readable R without forcing users into `DESCRIPTION`,
-`NAMESPACE`, and package build workflows for every use case.
-
-### 14.4 Recommended v0.0.1 policy
-
-A conforming v0.0.1 toolchain SHOULD adopt:
-
-- single-file and small-project workflows compile directly to `.R`;
-- package generation is officially supported and documented;
-- reusable library projects are strongly encouraged to use package mode;
-- the internal module and dependency model is already package-compatible;
-- the language definition itself does not make package generation part of
-  core semantics.
-
-### 14.5 Specification consequence
-
-Package generation is a **compiler output and project model concern**, not a
-requirement for whether a Quone program is valid. This keeps the core
-language smaller and cleaner while preserving a strong long-term interop
-story with R.
-
-### 14.6 Multi-module package layout
-
-A Quone project containing multiple modules compiles to a single R
-package. The mapping is direct and uses no name mangling: every Quone
-function lowers to a bare R name in `snake_case`, and the package's flat
-internal namespace is shared across all modules.
-
-**Source layout.** A Quone project has the following shape:
-
-```
-my-project/
-├── quone.toml                      # project metadata and dependencies
-└── src/
-    ├── Stats/
-    │   ├── Transform.Q             # module Stats.Transform exporting (..)
-    │   └── Summary.Q               # module Stats.Summary exporting (..)
-    └── Data/
-        └── Loader.Q                # module Data.Loader exporting (..)
-```
-
-The directory tree under `src/` mirrors the dotted module path. Each
-`.Q` file (uppercase extension, mirroring R's convention of capital
-`.R`) contains exactly one module declaration whose dotted path
-matches its location.
-
-**Generated R package layout.**
-
-```
-my-project/                         # generated R package root
-├── DESCRIPTION                     # from quone.toml + auto-derived deps
-├── NAMESPACE                       # from `@export` tags via roxygen2
-├── R/
-│   ├── stats-transform.R
-│   ├── stats-summary.R
-│   └── data-loader.R
-└── man/
-    ├── normalize.Rd
-    ├── mean_score.Rd
-    └── load_scores.Rd
-```
-
-**File-name mapping.** A Quone module path maps to an R filename in `R/`
-by lowercasing every segment and replacing dots with hyphens. The result
-matches conventional R package layout (compare `dplyr/R/group_by.R`,
-`tidyr/R/pivot-long.R`).
-
-| Quone module        | R file                     |
-| ------------------- | -------------------------- |
-| `Stats.Transform`   | `R/stats-transform.R`      |
-| `Stats.Summary`     | `R/stats-summary.R`        |
-| `Data.Loader`       | `R/data-loader.R`          |
-
-**Function-name mapping.** No mangling. Every Quone function lowers to
-its bare `snake_case` name in R:
-
-| Quone (fully qualified)             | Generated R         |
-| ----------------------------------- | ------------------- |
-| `Stats.Transform.normalize`         | `normalize`         |
-| `Stats.Summary.mean_score`          | `mean_score`        |
-| `Data.Loader.load_scores`           | `load_scores`       |
-
-Cross-module calls within the same package use the bare R name, because
-all functions share the package's flat internal namespace. The compiler
-MUST reject a project in which two modules define functions (whether
-exported or internal) with the same `snake_case` name. This collision
-check is package-wide and runs at compile time before any R is emitted.
-
-**R-level public API.** A binding appears in the generated `NAMESPACE`
-if and only if its `#'` doc block contains an `@export` tag
-([section 3.6](#36-comments)). A binding can therefore be:
-
-- **Quone-private** (not in any `exporting (..)` list): unreachable
-  outside its defining module.
-- **Quone-exported, R-internal** (in `exporting (..)`, no `@export`):
-  reachable from other Quone modules in the same project, but not in the
-  R package's `NAMESPACE`. External R code can still reach it via R's
-  triple-colon escape hatch (`pkg:::name`), as for any R package internal.
-- **Quone-exported, R-exported** (in `exporting (..)` and `@export` in
-  doc block): reachable from other Quone modules and listed in
-  `NAMESPACE`. This is the package's public R API.
-
-A binding marked `@export` MUST also appear in its module's
-`exporting (..)` list; the compiler MUST reject the inverse.
-
-**`NAMESPACE` and `man/` generation.** The compiler MUST NOT write
-`NAMESPACE` or `man/*.Rd` directly. After emitting `R/`, `DESCRIPTION`,
-and the source-level `#'` doc blocks, the package-mode build MUST invoke
-`roxygen2::roxygenise(package_dir)` (equivalently
-`devtools::document(package_dir)`) to derive `NAMESPACE` and the `.Rd`
-files from the `@export`, `@param`, and other tags in the doc blocks.
-
-This guarantees that `NAMESPACE` always reflects the `@export` tags
-present in the generated R, and that `roxygen2`'s rules for namespace
-imports (`@importFrom`, `@import`) and method registration (`@method`,
-`@rdname`) work exactly as they do in any hand-written R package.
-
-`roxygen2` is therefore a build-time dependency of package mode. It is
-not a runtime dependency of the produced package.
-
-**`DESCRIPTION`.** Generated by Quone (not by `roxygen2`) from
-`quone.toml` plus the auto-derived runtime dependency set. The
-`Imports:` field is the union of all R packages the compiled output
-calls, computed per
-[section 13.9](#139-foreign-r-bindings-and-runtime-dependencies). Quone
-also adds a generated `Roxygen:` field declaring the markdown setting
-(typically `Roxygen: list(markdown = TRUE)`) so `roxygen2` parses the
-doc blocks consistently across runs.
+Section 14 contained the project layout, package-mode output rules, and
+the cross-module collision check. Same reason as section 13 - these are
+compiler-output concerns rather than language concerns.
 
 ---
 
@@ -2088,6 +3300,50 @@ The lexer test suite MUST cover, with positive and negative cases:
 - Source-position tracking: every token MUST carry an accurate
   `(start_line, start_col, end_line, end_col)` range; tests MUST
   assert these positions for at least one token of each kind.
+
+<!-- BEGIN tests:16_3 -->
+**Tests** (2):
+
+- [`lex/position_first_token_at_1_1_section_16_3`](https://github.com/quone-lang/compiler/blob/19830fa0a68e994f6062b7a0cab2894a70b566d5/tests/Test/LexTests.hs#L317)
+- [`lex/position_second_line_starts_at_2_1_section_16_3`](https://github.com/quone-lang/compiler/blob/19830fa0a68e994f6062b7a0cab2894a70b566d5/tests/Test/LexTests.hs#L327)
+
+<details>
+<summary>Show test source</summary>
+
+```haskell
+    test "lex/position_first_token_at_1_1_section_16_3" <|
+        case lexInput "score" of
+            Prelude.Right (Located {locSpan = SourceSpan start _} : _) ->
+                Prelude.pure
+                    ( assert
+                        (posLine start Prelude.== 1 Prelude.&& posCol start Prelude.== 1)
+                        "first token should start at line 1 column 1"
+                    )
+            _ ->
+                Prelude.pure (Fail "expected at least one token")
+    test "lex/position_second_line_starts_at_2_1_section_16_3" <|
+        let
+            toks = allTokens "x\ny"
+            -- find the 'y' token (TLowerIdent "y")
+            mY = List.find (\l -> locValueOf l Prelude.== TLowerIdent "y") (lexedLocated "x\ny")
+        in
+        case mY of
+            Just l ->
+                let
+                    start = spanStart (locSpan l)
+                in
+                Prelude.pure
+                    ( assert
+                        (posLine start Prelude.== 2 Prelude.&& posCol start Prelude.== 1)
+                        "'y' should start at line 2 column 1"
+                    )
+            Nothing ->
+                Prelude.pure (Fail (T.pack (Prelude.show toks)))
+```
+
+</details>
+<!-- END tests:16_3 -->
+
 
 ### 16.4 Parser tests
 
@@ -2217,6 +3473,22 @@ harness and SHOULD be the most recent stable R release. Multiple R
 versions MAY be tested in CI; if so, the matrix MUST be documented in
 the test infrastructure.
 
+<!-- BEGIN tests:16_8 -->
+**Tests** (10):
+
+- [`scenarios/01_arithmetic_pipeline`](https://github.com/quone-lang/compiler/blob/19830fa0a68e994f6062b7a0cab2894a70b566d5/tests/scenarios/01_arithmetic_pipeline.Q#L1)
+- [`scenarios/02_higher_order_with_let`](https://github.com/quone-lang/compiler/blob/19830fa0a68e994f6062b7a0cab2894a70b566d5/tests/scenarios/02_higher_order_with_let.Q#L1)
+- [`scenarios/03_record_field_access`](https://github.com/quone-lang/compiler/blob/19830fa0a68e994f6062b7a0cab2894a70b566d5/tests/scenarios/03_record_field_access.Q#L1)
+- [`scenarios/04_dataframe_filter_arrange`](https://github.com/quone-lang/compiler/blob/19830fa0a68e994f6062b7a0cab2894a70b566d5/tests/scenarios/04_dataframe_filter_arrange.Q#L1)
+- [`scenarios/05_group_by_summarize`](https://github.com/quone-lang/compiler/blob/19830fa0a68e994f6062b7a0cab2894a70b566d5/tests/scenarios/05_group_by_summarize.Q#L1)
+- [`scenarios/06_select_then_filter`](https://github.com/quone-lang/compiler/blob/19830fa0a68e994f6062b7a0cab2894a70b566d5/tests/scenarios/06_select_then_filter.Q#L1)
+- [`scenarios/07_case_chain_classification`](https://github.com/quone-lang/compiler/blob/19830fa0a68e994f6062b7a0cab2894a70b566d5/tests/scenarios/07_case_chain_classification.Q#L1)
+- [`scenarios/08_foreign_import_dplyr`](https://github.com/quone-lang/compiler/blob/19830fa0a68e994f6062b7a0cab2894a70b566d5/tests/scenarios/08_foreign_import_dplyr.Q#L1)
+- [`scenarios/09_pharma_lite_pipeline`](https://github.com/quone-lang/compiler/blob/19830fa0a68e994f6062b7a0cab2894a70b566d5/tests/scenarios/09_pharma_lite_pipeline.Q#L1)
+- [`scenarios/10_record_update`](https://github.com/quone-lang/compiler/blob/19830fa0a68e994f6062b7a0cab2894a70b566d5/tests/scenarios/10_record_update.Q#L1)
+<!-- END tests:16_8 -->
+
+
 ### 16.9 Property-based tests
 
 The suite MUST include property-based tests covering at least:
@@ -2250,6 +3522,22 @@ The repository MUST contain a versioned corpus of test programs:
 
 Every change to the language or compiler that alters observable
 behaviour MUST update the corpus.
+
+<!-- BEGIN tests:16_10 -->
+**Tests** (10):
+
+- [`invalid/dataframe_unknown_column`](https://github.com/quone-lang/compiler/blob/19830fa0a68e994f6062b7a0cab2894a70b566d5/tests/corpus/invalid/dataframe_unknown_column.Q#L1)
+- [`invalid/mixed_arithmetic`](https://github.com/quone-lang/compiler/blob/19830fa0a68e994f6062b7a0cab2894a70b566d5/tests/corpus/invalid/mixed_arithmetic.Q#L1)
+- [`invalid/unbound_variable`](https://github.com/quone-lang/compiler/blob/19830fa0a68e994f6062b7a0cab2894a70b566d5/tests/corpus/invalid/unbound_variable.Q#L1)
+- [`invalid/unknown_field`](https://github.com/quone-lang/compiler/blob/19830fa0a68e994f6062b7a0cab2894a70b566d5/tests/corpus/invalid/unknown_field.Q#L1)
+- [`snapshot/hello`](https://github.com/quone-lang/compiler/blob/19830fa0a68e994f6062b7a0cab2894a70b566d5/tests/corpus/snapshot/hello.Q#L1)
+- [`snapshot/pipeline`](https://github.com/quone-lang/compiler/blob/19830fa0a68e994f6062b7a0cab2894a70b566d5/tests/corpus/snapshot/pipeline.Q#L1)
+- [`valid/case_and_if`](https://github.com/quone-lang/compiler/blob/19830fa0a68e994f6062b7a0cab2894a70b566d5/tests/corpus/valid/case_and_if.Q#L1)
+- [`valid/dataframe`](https://github.com/quone-lang/compiler/blob/19830fa0a68e994f6062b7a0cab2894a70b566d5/tests/corpus/valid/dataframe.Q#L1)
+- [`valid/literals`](https://github.com/quone-lang/compiler/blob/19830fa0a68e994f6062b7a0cab2894a70b566d5/tests/corpus/valid/literals.Q#L1)
+- [`valid/operators`](https://github.com/quone-lang/compiler/blob/19830fa0a68e994f6062b7a0cab2894a70b566d5/tests/corpus/valid/operators.Q#L1)
+<!-- END tests:16_10 -->
+
 
 ### 16.11 Regression tests
 
