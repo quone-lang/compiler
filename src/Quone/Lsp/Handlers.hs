@@ -276,9 +276,11 @@ hoverMarkdown sym =
     let
         sigLine = case Symbols.symType sym of
             Just sch ->
-                "`" ++ Symbols.symName sym ++ " : "
+                "```quone\n"
+                    ++ Symbols.symName sym
+                    ++ " : "
                     ++ Symbols.renderScheme sch
-                    ++ "`"
+                    ++ "\n```"
             Prelude.Nothing -> "`" ++ Symbols.symName sym ++ "`"
         body = case Symbols.symDoc sym of
             [] -> sigLine
