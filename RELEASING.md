@@ -30,7 +30,7 @@ with:
 | `os`  | `macos`, `linux`, `windows`     |
 | `arch`| `x86_64`, `arm64`               |
 
-The supported `(os, arch)` pairs for v0.0.1 are:
+The supported `(os, arch)` pairs for initial release are:
 
 - `quonec-macos-x86_64.tar.gz`
 - `quonec-macos-arm64.tar.gz`
@@ -41,6 +41,15 @@ The supported `(os, arch)` pairs for v0.0.1 are:
 Each tarball MUST contain a single binary named `quonec` (or
 `quonec.exe` on Windows) at the archive root, marked executable
 (`chmod +x`) for POSIX targets.
+
+The VS Code-compatible extension MUST be published as:
+
+```
+quone-vscode.vsix
+```
+
+This stable name lets `quone::install_lsp(version = "latest")` resolve the
+current editor extension without first discovering the latest version number.
 
 ## Latest pointer
 
@@ -58,7 +67,7 @@ MUST resolve to the asset for the named tag. This is what
 ## Release procedure
 
 1. Bump `version:` in [compiler.cabal](compiler.cabal).
-2. Update the changelog (TODO: add `CHANGELOG.md` for v0.0.2).
+2. Run the release validation in CI.
 3. `git tag vMAJOR.MINOR.PATCH && git push --tags`.
 4. The `release.yaml` GitHub Actions workflow under
    [.github/workflows/](./.github/workflows/) builds binaries for
@@ -71,11 +80,10 @@ MUST resolve to the asset for the named tag. This is what
 
 ## Verification at install time
 
-`quone::install_compiler()` does not currently verify SHA256
-checksums (planned for v0.0.2). For v0.0.1, integrity is taken from
-GitHub's HTTPS transport.
+`quone::install_compiler()` does not currently verify SHA256 checksums. For the
+initial release, integrity is taken from GitHub's HTTPS transport.
 
-## Out of scope for v0.0.1
+## Out of scope for initial release
 
 - Statically-linked Linux musl builds.
 - 32-bit targets.

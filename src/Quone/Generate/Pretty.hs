@@ -1,7 +1,7 @@
 {-| A tiny pretty-printing helper for the R generator.
 
 R itself is a token-friendly language; we don't need a full Wadler-
-style printer for v0.0.1. Hand-rolling a 'Doc' with explicit indent
+style printer for initial release. Hand-rolling a 'Doc' with explicit indent
 levels keeps generated output predictable for snapshot tests.
 
 -}
@@ -120,7 +120,7 @@ namedCallR fn args =
         Prelude.<> ")"
 
 
--- | R's assignment operator (matches LANGUAGE.md section 13.2.1).
+-- | R's assignment operator (matches LANGUAGE2.md section 13.2.1).
 assign :: Text -> Text -> Text
 assign name body = name Prelude.<> " <- " Prelude.<> body
 

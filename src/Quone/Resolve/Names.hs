@@ -2,9 +2,9 @@
 
 For each module in a project we build a 'ModuleSymbols' table, then
 verify imports against the source module's exports
-(LANGUAGE.md section 4.5).
+(LANGUAGE2.md section 4.5).
 
-For v0.0.1 the resolver focuses on the rules that need cross-module
+For initial release the resolver focuses on the rules that need cross-module
 information; intra-module name use is left to the typer (it already
 walks the AST and would otherwise duplicate work).
 
@@ -150,12 +150,12 @@ collectLocals = List.foldl' step Map.empty
                 acc
         DImport (QuoneImport _ _ sel) ->
             Prelude.foldr addImported acc (selectionItems sel)
-        DImport (ForeignImport _ fname _) ->
+        DImport (ForeignImport _ _ fname _) ->
             Map.insert
-                (lowerText (foreignFn fname))
+                (lowerText (foreignBindName fname))
                 ( LocalName
                     { localKind = LkImport
-                    , localSpan = lowerSpan (foreignFn fname)
+                    , localSpan = lowerSpan (foreignBindName fname)
                     }
                 )
                 acc
@@ -168,6 +168,32 @@ collectLocals = List.foldl' step Map.empty
                     }
                 )
                 acc
+        DExtern (ExternValue _ _ name _ _ _) ->
+            Map.insert
+                (lowerText name)
+                ( LocalName
+                    { localKind = LkValue
+                    , localSpan = lowerSpan name
+                    }
+                )
+                acc
+        DExtern (ExternType _ name _ _) ->
+            Map.insert
+                (upperText name)
+                ( LocalName
+                    { localKind = LkType
+                    , localSpan = upperSpan name
+                    }
+                )
+                acc
+        DInfix _ ->
+            -- Infix overloads do not introduce a new value-level
+            -- binding (the operator is parsed as 'EBinOp', not as a
+            -- function reference). The dispatch table lives in the
+            -- type checker.
+            acc
+        DPrefix _ ->
+            acc
 
     addImported item m =
         let
@@ -198,8 +224,8 @@ selectionItems = \case
 -- ---------------------------------------------------------------------
 
 
--- | Validate the parts of LANGUAGE.md section 4.5 a single module can
--- check on its own. For v0.0.1 that is:
+-- | Validate the parts of LANGUAGE2.md section 4.5 a single module can
+-- check on its own. For initial release that is:
 --
 -- * the foreign-import path is non-empty (parser already enforces);
 -- * import selections do not declare duplicate local names.
@@ -229,10 +255,16 @@ duplicateLocalNames prog =
                 (upperText (aliasDeclName d), upperSpan (aliasDeclName d)) : acc
             DImport (QuoneImport _ _ sel) ->
                 Prelude.fmap exportItemNameSpan (selectionItems sel) Prelude.++ acc
-            DImport (ForeignImport _ fname _) ->
-                (lowerText (foreignFn fname), lowerSpan (foreignFn fname)) : acc
+            DImport (ForeignImport _ _ fname _) ->
+                (lowerText (foreignBindName fname), lowerSpan (foreignBindName fname)) : acc
             DValue d ->
                 (lowerText (valueDeclName d), lowerSpan (valueDeclName d)) : acc
+            DExtern (ExternValue _ _ name _ _ _) ->
+                (lowerText name, lowerSpan name) : acc
+            DExtern (ExternType _ name _ _) ->
+                (upperText name, upperSpan name) : acc
+            DInfix _ -> acc
+            DPrefix _ -> acc
 
         seen = Map.empty :: Map.Map Text SourceSpan
 
@@ -387,7 +419,7 @@ checkSelectedName sourceSyms item =
 importDeclSpan :: Decl -> SourceSpan
 importDeclSpan = \case
     DImport (QuoneImport sp _ _) -> sp
-    DImport (ForeignImport sp _ _) -> sp
+    DImport (ForeignImport sp _ _ _) -> sp
     other -> declSpan other
 
 

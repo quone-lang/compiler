@@ -48,3 +48,6 @@ jobs:
 
       - name: cabal test
         run: cabal test --test-show-details=direct
+
+      - name: release example check
+        run: cabal exec quonec -- check examples/hello.Q

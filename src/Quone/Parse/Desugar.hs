@@ -1,6 +1,6 @@
 {-| Desugar the CST into the AST.
 
-Applies the surface-only desugarings from LANGUAGE.md section 5.3:
+Applies the surface-only desugarings from LANGUAGE2.md section 5.3:
 
 * @if e1 then e2 else e3@ ⇒ @case e1 of True -> e2; False -> e3@.
 
@@ -19,6 +19,7 @@ module Quone.Parse.Desugar
     )
 where
 
+import qualified Data.List as List
 import qualified Data.Text as T
 import NriPrelude
 import Quone.Ast.Source
@@ -61,6 +62,10 @@ desugar (C.CProgram sp mModule decls) =
         { programSpan = sp
         , programModule = Prelude.fmap dModule mModule
         , programDecls = Prelude.fmap dDecl decls
+        , -- The user-facing parser path always produces non-prelude
+          -- programs. The prelude loader sets this flag explicitly
+          -- after calling 'desugar'.
+          programIsPrelude = Prelude.False
         }
 
 
@@ -106,6 +111,9 @@ dDecl = \case
     C.CDTypeAlias d -> DTypeAlias (dTypeAliasDecl d)
     C.CDImport d -> DImport (dImportDecl d)
     C.CDValue d -> DValue (dValueDecl d)
+    C.CDExtern d -> DExtern (dExternDecl d)
+    C.CDInfix d -> DInfix (dInfixDecl d)
+    C.CDPrefix d -> DPrefix (dPrefixDecl d)
 
 
 dTypeDecl :: C.CTypeDecl -> TypeDecl
@@ -143,8 +151,19 @@ dImportDecl :: C.CImportDecl -> ImportDecl
 dImportDecl = \case
     C.CQuoneImport sp path sel ->
         QuoneImport sp (Prelude.fmap dUpper path) (dImportSelection sel)
-    C.CForeignImport sp fname sig ->
-        ForeignImport sp (dForeignName fname) (dTypeSig sig)
+    C.CForeignImport sp classification fname sig ->
+        ForeignImport
+            sp
+            (dForeignClassification classification)
+            (dForeignName fname)
+            (dTypeSig sig)
+
+
+dForeignClassification :: C.CForeignClassification -> ForeignClassification
+dForeignClassification = \case
+    C.CCOpaque -> FCOpaque
+    C.CCElementwise -> FCElementwise
+    C.CCReducer -> FCReducer
 
 
 dImportSelection :: C.CImportSelection -> ImportSelection
@@ -160,6 +179,8 @@ dForeignName f =
         { foreignSpan = C.foreignNameSpan f
         , foreignPackage = Prelude.fmap dLower (C.foreignNamePackage f)
         , foreignFn = dLower (C.foreignNameFn f)
+        , foreignAlias = Prelude.fmap dLower (C.foreignNameAlias f)
+        , foreignVia = C.foreignNameVia f
         }
 
 
@@ -172,7 +193,83 @@ dValueDecl d =
         , valueDeclParams = Prelude.fmap dLower (C.valueDeclParams d)
         , valueDeclBody = dExpr (C.valueDeclBody d)
         , valueDeclDoc = Prelude.fmap dDocBlock (C.valueDeclDoc d)
+        , valueDeclClassification =
+            dForeignClassification (C.valueDeclClassification d)
         }
+
+
+dExternDecl :: C.CExternDecl -> ExternDecl
+dExternDecl = \case
+    C.CExternValue sp classification name sig body mDoc ->
+        ExternValue
+            sp
+            (dExternClassification classification)
+            (dLower name)
+            (dTypeSig sig)
+            (dExternBody body)
+            (Prelude.fmap dDocBlock mDoc)
+    C.CExternType sp name params mDoc ->
+        ExternType
+            sp
+            (dUpper name)
+            (Prelude.fmap dLower params)
+            (Prelude.fmap dDocBlock mDoc)
+
+
+dExternBody :: C.CExternBody -> ExternBody
+dExternBody = \case
+    C.CExternSimple sp s -> ExternSimple sp s
+    C.CExternDispatch sp s var -> ExternDispatch sp s var
+
+
+dExternClassification :: C.CExternClassification -> ExternClassification
+dExternClassification = \case
+    C.CECOpaque -> ECOpaque
+    C.CECElementwise -> ECElementwise
+    C.CECReducer -> ECReducer
+
+
+dInfixDecl :: C.CInfixDecl -> InfixDecl
+dInfixDecl d =
+    InfixDecl
+        { infixDeclSpan = C.infixDeclSpan d
+        , infixDeclFixity = dFixity (C.infixDeclFixity d)
+        , infixDeclPrec = C.infixDeclPrec d
+        , infixDeclOp = dBinOp (C.infixDeclOp d)
+        , infixDeclSig = dTypeSig (C.infixDeclSig d)
+        , infixDeclConstraints = dConstraints (C.infixDeclConstraints d)
+        , infixDeclR = C.infixDeclR d
+        , infixDeclDoc = Prelude.fmap dDocBlock (C.infixDeclDoc d)
+        }
+
+
+dPrefixDecl :: C.CPrefixDecl -> PrefixDecl
+dPrefixDecl d =
+    PrefixDecl
+        { prefixDeclSpan = C.prefixDeclSpan d
+        , prefixDeclPrec = C.prefixDeclPrec d
+        , prefixDeclOp = dUnaryOp (C.prefixDeclOp d)
+        , prefixDeclSig = dTypeSig (C.prefixDeclSig d)
+        , prefixDeclConstraints = dConstraints (C.prefixDeclConstraints d)
+        , prefixDeclR = C.prefixDeclR d
+        , prefixDeclDoc = Prelude.fmap dDocBlock (C.prefixDeclDoc d)
+        }
+
+
+-- | Lower a list of @forall n: Number, ...@ binders from the CST
+-- shape to the AST shape (M3.11).
+dConstraints
+    :: [(C.CLowerName, Maybe C.CUpperName)]
+    -> [(LowerName, Maybe UpperName)]
+dConstraints =
+    Prelude.fmap (\(n, mc) -> (dLower n, Prelude.fmap dUpper mc))
+
+
+dFixity :: C.CFixity -> Fixity
+dFixity = \case
+    C.CFLeft -> FLeft
+    C.CFRight -> FRight
+    C.CFNon -> FNon
 
 
 -- Types --------------------------------------------------------------
@@ -233,6 +330,7 @@ dExpr = \case
                         (exprSpan (dExpr cond))
                         (UpperName (exprSpan (dExpr cond)) "True")
                         []
+                , caseArmGuard = Prelude.Nothing
                 , caseArmBody = dExpr th
                 }
             , CaseArm
@@ -242,6 +340,7 @@ dExpr = \case
                         (exprSpan (dExpr cond))
                         (UpperName (exprSpan (dExpr cond)) "False")
                         []
+                , caseArmGuard = Prelude.Nothing
                 , caseArmBody = dExpr el
                 }
             ]
@@ -300,6 +399,7 @@ dCaseArm a =
     CaseArm
         { caseArmSpan = C.caseArmSpan a
         , caseArmPattern = dPattern (C.caseArmPattern a)
+        , caseArmGuard = Prelude.fmap dExpr (C.caseArmGuard a)
         , caseArmBody = dExpr (C.caseArmBody a)
         }
 
@@ -360,6 +460,8 @@ dPattern = \case
     C.CPCon sp n ps -> PCon sp (dUpper n) (Prelude.fmap dPattern ps)
     C.CPRecord sp fs -> PRecord sp (Prelude.fmap dRecordPatField fs)
     C.CPParen _ inner -> dPattern inner
+    C.CPVector sp _ -> PWildcard sp
+    C.CPAs sp _ _ -> PWildcard sp
 
 
 dRecordPatField :: C.CRecordPatField -> RecordPatField
@@ -389,20 +491,26 @@ kwToVerb = \case
     KUngroup -> VUngroup
     KArrange -> VArrange
     KRename -> VRename
-    KDistinct -> VDistinct
-    KDistinctAll -> VDistinctAll
-    KCount -> VCount
-    KSlice -> VSlice
-    KPull -> VPull
-    KRelocate -> VRelocate
-    KTransmute -> VTransmute
-    KMutateEach -> VMutateEach
-    KSummarizeEach -> VSummarizeEach
     KLeftJoin -> VLeftJoin
     KRightJoin -> VRightJoin
     KInnerJoin -> VInnerJoin
-    KFullJoin -> VFullJoin
-    KAntiJoin -> VAntiJoin
-    KSemiJoin -> VSemiJoin
-    KCrossJoin -> VCrossJoin
     _ -> VSelect
+
+
+-- | Source spelling of a verb keyword. Used by the
+-- verb-as-function-call desugaring (a `count predicate xs` outside
+-- a pipe context becomes `EApp (EVar "count") predicate xs`).
+kwToVerbText :: Keyword -> Text
+kwToVerbText = \case
+    KSelect -> "select"
+    KFilter -> "filter"
+    KMutate -> "mutate"
+    KSummarize -> "summarize"
+    KGroupBy -> "group_by"
+    KUngroup -> "ungroup"
+    KArrange -> "arrange"
+    KRename -> "rename"
+    KLeftJoin -> "left_join"
+    KRightJoin -> "right_join"
+    KInnerJoin -> "inner_join"
+    _ -> ""

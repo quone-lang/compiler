@@ -1,6 +1,6 @@
-{-| Hindley-Milner inference for the v0.0.1 expression core.
+{-| Hindley-Milner inference for the initial release expression core.
 
-Implements LANGUAGE.md sections 8.1 through 8.6 and 8.8:
+Implements LANGUAGE2.md sections 8.1 through 8.6 and 8.8:
 
 * HM inference with generalisation at top-level and let bindings;
 * type annotation checking against inferred types;
@@ -21,6 +21,7 @@ module Quone.Type.Infer
     ( -- * Top-level
       TypedProgram (..)
     , inferProgram
+    , inferProgramFrom
       -- * Per-expression entry (used by tests)
     , inferExprIn
     , runInfer
@@ -35,12 +36,15 @@ import qualified Data.Set as Set
 import qualified Data.Text as T
 import NriPrelude
 import Quone.Ast.Source
+import qualified Quone.Ast.Validate as Validate
 import Quone.Diagnostic
     ( Category (..)
     , Diagnostic (..)
     , Severity (Error)
     )
+import qualified Quone.Parse.Desugar as Desugar
 import Quone.Position (SourceSpan, emptySpan)
+import qualified Quone.Prelude.Embed as Embed
 import Quone.Type.Env
 import Quone.Type.Types
 import qualified Quone.Type.Verb as Verb
@@ -62,21 +66,65 @@ data TypedProgram = TypedProgram
     deriving (Prelude.Show, Prelude.Eq)
 
 
--- | Infer types for every top-level binding. Returns the typed program
--- on success, or the first diagnostic on failure.
+-- | Infer types for every top-level binding. Returns the typed
+-- program on success, or the first diagnostic on failure.
+--
+-- Seeds inference from the embedded prelude environment so that
+-- prelude names and operator overloads are in scope automatically.
+-- Callers that want to thread their own starting environment (e.g.
+-- for incremental compilation) should prefer 'inferProgramFrom'.
 inferProgram :: Program -> Prelude.Either Diagnostic TypedProgram
 inferProgram prog =
+    Prelude.fmap Prelude.fst (inferProgramFrom seedEnv prog)
+  where
+    -- Compute the prelude env once at module load (this binding is
+    -- a CAF: GHC memoises it). A malformed prelude is a compiler-
+    -- development bug; falling back to 'initialEnv' keeps callers
+    -- that swallow diagnostics able to see at least primitive types.
+    seedEnv = case loadPreludeEnv of
+        Prelude.Right e -> e
+        Prelude.Left _ -> initialEnv
+
+
+-- | Load and type-check the embedded prelude, returning its final
+-- environment. Pure (the source is embedded). Used by 'inferProgram'
+-- to seed user-program inference and by 'Quone.Prelude.Load' for the
+-- LSP / CLI compile paths.
+loadPreludeEnv :: Prelude.Either Diagnostic Env
+loadPreludeEnv = do
+    rawProg <- Desugar.desugarFile Embed.preludeFilename Embed.preludeSource
+    let prog = rawProg {programIsPrelude = Prelude.True}
+    case Validate.validate prog of
+        (d : _) -> Prelude.Left d
+        [] -> do
+            (_, finalEnv) <- inferProgramFrom initialEnv prog
+            Prelude.pure finalEnv
+
+
+-- | Infer types starting from a caller-supplied seed environment.
+-- The seed already contains every prelude binding (loaded via
+-- 'Quone.Prelude.Load.loadPrelude'); this function adds the user
+-- program's custom types and value bindings on top of it.
+--
+-- Returns both the typed program and the final environment, so the
+-- caller can pass that environment downstream (e.g. to LSP hover).
+inferProgramFrom
+    :: Env
+    -> Program
+    -> Prelude.Either Diagnostic (TypedProgram, Env)
+inferProgramFrom seedEnv prog =
     let
-        env = registerCustomTypes initialEnv (programDecls prog)
+        env = registerCustomTypes seedEnv (programDecls prog)
     in
     case runInfer (inferDecls env (programDecls prog)) of
         Prelude.Left d -> Prelude.Left d
-        Prelude.Right (binds, _) ->
+        Prelude.Right (binds, finalEnv) ->
             Prelude.Right
                 ( TypedProgram
                     { typedProgram = prog
                     , typedBindings = binds
                     }
+                , finalEnv
                 )
 
 
@@ -171,7 +219,21 @@ freshVar hint = Infer <| \s ->
         nextId = isNextVar s
     in
     IOk
-        (TyVarT (TyVar nextId hint))
+        (TyVarT (mkTyVar nextId hint))
+        (s {isNextVar = nextId Prelude.+ 1})
+
+
+-- | Like 'freshVar' but with an Elm-style class constraint (M3.11).
+-- Used when instantiating a binding whose scheme has a constrained
+-- bound variable (e.g. @forall n: Number. n -> n -> n@): the
+-- instantiated tyvar must inherit the constraint.
+freshVarC :: TyVarConstraint -> Text -> Infer Type
+freshVarC constraint hint = Infer <| \s ->
+    let
+        nextId = isNextVar s
+    in
+    IOk
+        (TyVarT (mkTyVarC nextId hint constraint))
         (s {isNextVar = nextId Prelude.+ 1})
 
 
@@ -190,7 +252,7 @@ markNumeric = \case
 -- | Default every still-unresolved numeric type variable accumulated
 -- during the current declaration to 'Double', then clear the set.
 --
--- Per LANGUAGE.md section 8.8, R's bare numeric default is double;
+-- Per LANGUAGE2.md section 8.8, R's bare numeric default is double;
 -- a Quone author who wants integer arithmetic must either annotate
 -- the binding or use the @L@ literal suffix. This rule runs at the
 -- decl boundary so the defaulting decision is local: it cannot
@@ -229,7 +291,7 @@ registerCustomTypes = List.foldl' step
                 tyName = upperText (typeDeclName d)
                 tparams =
                     Prelude.zipWith
-                        (\i p -> TyVar (Prelude.negate (i Prelude.+ 1)) (lowerText p))
+                        (\i p -> mkTyVar (Prelude.negate (i Prelude.+ 1)) (lowerText p))
                         [0 ..]
                         (typeDeclParams d)
                 resultTy =
@@ -273,10 +335,18 @@ registerCustomTypes = List.foldl' step
             List.foldl' addCon env' (typeDeclVariants d)
         DTypeAlias d ->
             -- Aliases are expanded structurally during type lookup;
-            -- registering arity is enough for v0.0.1.
+            -- registering arity is enough for initial release.
             insertType
                 (upperText (aliasDeclName d))
                 (Prelude.fromIntegral (Prelude.length (aliasDeclParams d)))
+                env
+        DExtern (ExternType _ name params _) ->
+            -- Primitive types declared by the prelude. Register name
+            -- + arity so the type checker can validate signatures
+            -- like @Vector Integer@.
+            insertType
+                (upperText name)
+                (Prelude.fromIntegral (Prelude.length params))
                 env
         _ -> env
 
@@ -293,12 +363,16 @@ typeAtomToType params = \case
         case List.find (\tv -> tyVarName tv Prelude.== lowerText n) params of
             Just tv -> TyVarT tv
             Nothing ->
-                -- Fall back: treat as a fresh-style variable. The
-                -- inferer will instantiate at use sites.
-                TyVarT (TyVar 0 (lowerText n))
+                -- Defensive fallback. Callers SHOULD pre-collect every
+                -- free type variable from the signature via
+                -- 'collectSigTVars' so each name gets a unique
+                -- 'tyVarId'; this branch only fires if a caller
+                -- forgets, in which case all unrecognised names share
+                -- id 0 and risk collision (M2.3).
+                TyVarT (mkTyVar 0 (lowerText n))
     TParen _ inner -> typeSigToType params inner
     TRecord r -> TyRecord (recordFields params r)
-    TDataframe _ r -> TyDataframe (recordFields params r)
+    TDataframe _ r -> TyDataframe (ungroupedDf (recordFields params r))
 
 
 typeSigToType :: [TyVar] -> TypeSig -> Type
@@ -337,26 +411,59 @@ inferDecls
     -> Infer (Map.Map Text Scheme, Env)
 inferDecls env decls = do
     -- Pre-allocate a fresh type variable for every top-level value so
-    -- mutual references can resolve. v0.0.1 does not do strongly-
-    -- connected-component analysis; mutual recursion at the top level
-    -- gets the same fresh-variable treatment as a simple let.
+    -- mutual references can resolve. After all decls are typed, a
+    -- second pass re-generalises every value binding against the
+    -- final substitution so mutually-recursive bindings can each
+    -- become polymorphic (M3.6).
     (env0, holes) <- preallocate env decls
     finalised <- foldM (typecheckOne holes) env0 decls
+    -- Second-pass generalisation (M3.6): each top-level value
+    -- binding's type may have acquired more substitution refinements
+    -- after the FIRST decl was typed (mutual references). Re-quantify
+    -- each binding against the now-finalised substitution.
+    regeneralised <- regeneraliseValueBindings env (Map.keys holes) finalised
     let
         binds =
             Map.fromList
                 ( Prelude.fmap
-                    (\(name, _) ->
+                    (\name ->
                         ( name
                         , Map.findWithDefault
                             (monoScheme (TyCon "Integer"))
                             name
-                            (envValues finalised)
+                            (envValues regeneralised)
                         )
                     )
-                    (Map.toList holes)
+                    (Map.keys holes)
                 )
-    Prelude.pure (binds, finalised)
+    Prelude.pure (binds, regeneralised)
+
+
+-- | Re-run generalisation on every top-level value binding using the
+-- current substitution. This is a no-op for non-mutually-recursive
+-- bindings; for mutually-recursive ones it lets each binding become
+-- polymorphic now that its references have been resolved (M3.6).
+regeneraliseValueBindings
+    :: Env       -- ^ original env (before this group of decls)
+    -> [Text]    -- ^ names of the value decls in this group
+    -> Env       -- ^ current env (with monomorphic schemes)
+    -> Infer Env
+regeneraliseValueBindings origEnv names finalEnv = do
+    sub <- getSubst
+    let
+        envFTV = freeTypeVarsEnvValues origEnv
+        upd e name =
+            case Map.lookup name (envValues e) of
+                Nothing -> e
+                Just sch ->
+                    let
+                        finalTy = applySubst sub (schemeBody sch)
+                        qvars = Set.toList
+                            (Set.difference (freeTypeVars finalTy) envFTV)
+                        scheme = Scheme {schemeVars = qvars, schemeBody = finalTy}
+                    in
+                    insertValue name scheme e
+    Prelude.pure (List.foldl' upd finalEnv names)
 
 
 preallocate
@@ -406,18 +513,117 @@ typecheckOne holes env decl = case decl of
             envFTV = freeTypeVarsEnvValues env
             qvars = Set.toList (Set.difference (freeTypeVars finalTy) envFTV)
             scheme = Scheme {schemeVars = qvars, schemeBody = finalTy}
-        Prelude.pure (insertValue name scheme env)
-    DImport (ForeignImport _ fname sig) ->
+            -- Classify the binding's body so verb-rhs checks can
+            -- reject opaque user functions (LANGUAGE2.md sections 8.7
+            -- and 9.2). Parameters are treated as elementwise (they
+            -- are values, not callables) so a body like
+            -- @weight / height@ classifies as 'Elementwise'.
+            envWithParams =
+                Prelude.foldr
+                    (\p e -> insertClassification (lowerText p) Elementwise e)
+                    env
+                    (valueDeclParams v)
+            -- Explicit classification on the binding (M3.10) wins
+            -- over body-inferred classification. The default of
+            -- `FCOpaque` falls through to body inference, preserving
+            -- initial release behaviour for un-annotated bindings.
+            cls = case valueDeclClassification v of
+                FCElementwise -> Elementwise
+                FCReducer -> Reducer
+                FCOpaque -> Verb.classifyExpr envWithParams (valueDeclBody v)
+            envOut = insertValue name scheme env
+        Prelude.pure (insertClassification name cls envOut)
+    DImport (ForeignImport _ classification fname sig) ->
         -- Lower-case foreign imports (`import pkg.fn : Ty`) bind a
         -- value of the given type. The R `pkg::fn` qualification is
         -- emitted at code-gen time; here we just need the name in
-        -- scope at the inferred type per LANGUAGE.md section 4.5.
+        -- scope at the inferred type per LANGUAGE2.md section 4.5.
+        --
+        -- An optional `as <newname>` rename (M3.8) binds the alias
+        -- in the local scope; codegen still emits the original name.
+        --
+        -- The optional @elementwise@/@reducer@ modifier (LANGUAGE2.md
+        -- section 4.5) is recorded in 'envClassifications' so the
+        -- verb typer can reject opaque foreign callees in @mutate@ /
+        -- @summarize@ right-hand sides.
+        let
+            name = lowerText (foreignBindName fname)
+            envWithValue =
+                insertValue name (foreignScheme sig) env
+        in
         Prelude.pure
-            ( insertValue
-                (lowerText (foreignFn fname))
-                (foreignScheme sig)
+            ( insertClassification
+                name
+                (foreignClassificationToInfer classification)
+                envWithValue
+            )
+    DExtern (ExternValue _ classification name sig _ _) ->
+        -- Prelude-only @extern@ value declaration: bind the name to
+        -- its declared scheme and record its classification. The body
+        -- (R callable string) is consumed by codegen; the type checker
+        -- only needs the signature.
+        let
+            nm = lowerText name
+            envWithValue = insertValue nm (foreignScheme sig) env
+        in
+        Prelude.pure
+            ( insertClassification
+                nm
+                (externClassificationToInfer classification)
+                envWithValue
+            )
+    DExtern (ExternType _ name params _) ->
+        -- Register a primitive type with no source-language
+        -- constructors. Values come from literals (`1L`, `1.0`,
+        -- `"x"`) and from `EVector` syntax (`[a, b, c]`); the type
+        -- exists so type applications and signatures can refer to
+        -- it.
+        Prelude.pure
+            ( insertType
+                (upperText name)
+                (Prelude.fromIntegral (Prelude.length params))
                 env
             )
+    DInfix d ->
+        -- Append this overload's typing rule to the dispatch table.
+        -- The rule itself is consumed by 'inferBinOpFromOverloads'
+        -- below; the operator's R lowering string is consumed by the
+        -- generator (Phase C).
+        let
+            sigParams =
+                applyConstraints
+                    (infixDeclConstraints d)
+                    (collectSigTVars (infixDeclSig d))
+            sigTy = typeSigToType sigParams (infixDeclSig d)
+            (lhs, rhs, res) = splitArrowTriple sigTy
+            oo =
+                OperatorOverload
+                    { ooLhs = lhs
+                    , ooRhs = rhs
+                    , ooResult = res
+                    , ooFixity = infixDeclFixity d
+                    , ooPrec = infixDeclPrec d
+                    , ooR = infixDeclR d
+                    }
+        in
+        Prelude.pure (insertOperatorOverload (infixDeclOp d) oo env)
+    DPrefix d ->
+        let
+            sigParams =
+                applyConstraints
+                    (prefixDeclConstraints d)
+                    (collectSigTVars (prefixDeclSig d))
+            sigTy = typeSigToType sigParams (prefixDeclSig d)
+            (operand, res) = splitArrowPair sigTy
+            uo =
+                UnaryOverload
+                    { uoOperand = operand
+                    , uoResult = res
+                    , uoPrec = prefixDeclPrec d
+                    , uoR = prefixDeclR d
+                    }
+        in
+        Prelude.pure (insertUnaryOverload (prefixDeclOp d) uo env)
     _ ->
         -- Type / Alias / Quone-import declarations were already
         -- processed by 'registerCustomTypes' or are pure name-binding
@@ -446,7 +652,8 @@ inferValueBody env v =
             inferLambda env (valueDeclParams v) (valueDeclBody v)
         Just sig -> do
             let
-                annTy = typeSigToType [] sig
+                sigParams = collectSigTVars sig
+                annTy = typeSigToType sigParams sig
                 params = valueDeclParams v
             (paramTys, returnTy) <- splitArrow (valueDeclSpan v) annTy params
             let
@@ -485,13 +692,124 @@ splitArrow sp annTy params = go annTy params []
 -- | Build a top-level scheme for a foreign-import binding. Quantify
 -- over every type variable mentioned in the signature so the binding
 -- can be used at multiple instantiations.
+--
+-- Pre-collects free type variable names from the signature and
+-- assigns each a unique negative id (so they never collide with the
+-- inferer's positive fresh-var counter, and so two TVars in the
+-- same signature with different names get different ids — M2.3
+-- soundness fix).
 foreignScheme :: TypeSig -> Scheme
 foreignScheme sig =
     let
-        body = typeSigToType [] sig
+        params = collectSigTVars sig
+        body = typeSigToType params sig
         vars = Set.toList (freeTypeVars body)
     in
     Scheme {schemeVars = vars, schemeBody = body}
+
+
+-- | Collect every free type-variable name that appears in a
+-- 'TypeSig' (in source order, deduplicated) and assign each a
+-- unique negative 'TyVar' id. Used by callers of 'typeSigToType'
+-- whose signature can introduce its own type variables (foreign
+-- imports, infix declarations, value annotations).
+collectSigTVars :: TypeSig -> [TyVar]
+collectSigTVars sig =
+    Prelude.zipWith
+        (\i name -> mkTyVar (Prelude.negate (i Prelude.+ 1)) name)
+        [0 ..]
+        (sigTVarNames sig)
+
+
+-- | Apply the per-binder class constraints from a `forall n: Number,
+-- ...` prefix to a list of fresh-allocated tyvars (M3.11). For each
+-- binder name listed in 'constraints', if the corresponding tyvar is
+-- present in 'tvars', its 'tyVarConstraint' is updated. Tyvars not
+-- mentioned in the constraint list keep 'NoConstraint'. Constraint
+-- names other than @Number@ are silently ignored in initial release; future
+-- revisions could add 'Comparable' / 'Equatable'.
+applyConstraints
+    :: [(LowerName, Maybe UpperName)]
+    -> [TyVar]
+    -> [TyVar]
+applyConstraints constraints =
+    Prelude.fmap
+        (\tv -> case List.lookup (tyVarName tv) namedConstraints of
+            Just c -> tv {tyVarConstraint = c}
+            Nothing -> tv)
+  where
+    namedConstraints =
+        [ ( lowerText n
+          , case mc of
+                Just c -> classNameToConstraint (upperText c)
+                Nothing -> NoConstraint
+          )
+        | (n, mc) <- constraints
+        ]
+
+
+classNameToConstraint :: Text -> TyVarConstraint
+classNameToConstraint = \case
+    "Number" -> NumberConstraint
+    _ -> NoConstraint
+
+
+sigTVarNames :: TypeSig -> [Text]
+sigTVarNames = dedup Prelude.. go
+  where
+    go = \case
+        TFun _ a b -> go a Prelude.++ go b
+        TApp _ h xs -> goAtom h Prelude.++ Prelude.concatMap goAtom xs
+        TAtom a -> goAtom a
+
+    goAtom = \case
+        TName _ -> []
+        TVar n -> [lowerText n]
+        TParen _ inner -> go inner
+        TRecord (RecordType {recordTypeFields = fs}) ->
+            Prelude.concatMap (\f -> go (fieldTypeSig f)) fs
+        TDataframe _ (RecordType {recordTypeFields = fs}) ->
+            Prelude.concatMap (\f -> go (fieldTypeSig f)) fs
+
+    dedup = Prelude.foldr step []
+    step x acc = if x `Prelude.elem` acc then acc else x : acc
+
+
+-- | Translate the AST-level 'ForeignClassification' to the type-
+-- environment 'Classification'. Absent modifier defaults to 'Opaque',
+-- which @lookupClassification@ also returns for unknown names.
+foreignClassificationToInfer :: ForeignClassification -> Classification
+foreignClassificationToInfer = \case
+    FCOpaque -> Opaque
+    FCElementwise -> Elementwise
+    FCReducer -> Reducer
+
+
+-- | Translate the AST-level 'ExternClassification' (prelude @extern@
+-- declarations) to the type-environment 'Classification'.
+externClassificationToInfer :: ExternClassification -> Classification
+externClassificationToInfer = \case
+    ECOpaque -> Opaque
+    ECElementwise -> Elementwise
+    ECReducer -> Reducer
+
+
+-- | Split a binary-operator signature @lhs -> rhs -> result@ into
+-- its three component types. Used when registering @infix@ overloads.
+-- A signature with the wrong shape produces an internal-error type
+-- (the parser's grammar guarantees this can't happen for legal
+-- prelude source).
+splitArrowTriple :: Type -> (Type, Type, Type)
+splitArrowTriple = \case
+    TyFun a (TyFun b r) -> (a, b, r)
+    other -> (other, other, other)
+
+
+-- | Split a unary-operator signature @operand -> result@.
+splitArrowPair :: Type -> (Type, Type)
+splitArrowPair = \case
+    TyFun a r -> (a, r)
+    other -> (other, other)
 
 
 inferLambda :: Env -> [LowerName] -> Expr -> Infer Type
@@ -535,6 +853,8 @@ inferExprIn env = \case
             (inferArm sp env scrutTy result)
             arms
         sub <- getSubst
+        let resolvedScrut = applySubst sub scrutTy
+        checkExhaustiveness sp env resolvedScrut arms
         Prelude.pure (applySubst sub result)
     ELet _ binds body -> do
         env' <- foldM addBinding env binds
@@ -547,27 +867,25 @@ inferExprIn env = \case
         sub <- getSubst
         Prelude.pure (applySubst sub result)
     EBinOp sp op l r -> inferBinOp env sp op l r
-    EUnary sp OpNeg e -> do
+    EUnary sp op e -> do
         et <- inferExprIn env e
         sub <- getSubst
         let resolved = applySubst sub et
-        if isPrimNumeric resolved
-            then Prelude.pure resolved
-            else
-                inferFail
-                    ( typeMismatchDiag sp
-                        ("unary minus expects Integer or Double; got " Prelude.<> showType resolved)
-                    )
+        inferUnaryFromOverloads env sp op resolved
     EPipe sp lhs rhs -> do
         lt <- inferExprIn env lhs
         sub <- getSubst
         case (applySubst sub lt, rhs) of
-            (TyDataframe schema, EVerb vsp verb args) ->
+            (TyDataframe shape, EVerb vsp verb args) ->
                 -- Dataframe verb on a known schema: dispatch to the
-                -- verb-specific typer (LANGUAGE.md section 8.7).
-                case Verb.typeVerb runInferAsCallback env vsp verb schema args of
-                    Prelude.Right newSchema ->
-                        Prelude.pure (TyDataframe newSchema)
+                -- verb-specific typer (LANGUAGE2.md section 8.7). The
+                -- shape carries the schema plus any grouping keys
+                -- introduced by a preceding `group_by` so that
+                -- `summarize` / `ungroup` can consume them
+                -- (KNOWN_FAILURES #4).
+                case Verb.typeVerb runInferAsCallback env vsp verb shape args of
+                    Prelude.Right newShape ->
+                        Prelude.pure (TyDataframe newShape)
                     Prelude.Left d -> inferFail d
             _ -> do
                 -- Generic pipe: xs |> f desugars to f xs at the type level.
@@ -607,7 +925,7 @@ inferExprIn env = \case
             TyDataframe _ ->
                 inferFail
                     ( typeMismatchDiag sp
-                        "record update target is a dataframe; use `mutate` instead (LANGUAGE.md section 8.5)"
+                        "record update target is a dataframe; use `mutate` instead (LANGUAGE2.md section 8.5)"
                     )
             TyRecord existing -> do
                 fieldsM <-
@@ -647,14 +965,38 @@ inferExprIn env = \case
         sub <- getSubst
         Prelude.pure (TyApp (TyCon "Vector") (applySubst sub elementTy))
     EDataframe _ binds -> do
-        -- Each field's value should be a Vector of something.
+        -- Each column's value MUST be a `Vector α` for some α; the
+        -- dataframe shape stores the per-column element type α (not
+        -- the outer Vector). Without this check
+        -- `dataframe { x = 1L }` would type as
+        -- `dataframe { x : Integer }` and lower to broken R.
         fields <-
             Prelude.traverse
                 (\fb -> do
+                    elemTy <- freshVar "df_col"
                     t <- inferExprIn env (fieldBindingValue fb)
-                    Prelude.pure (lowerText (fieldBindingName fb), t))
+                    sub0 <- getSubst
+                    let resolved = applySubst sub0 t
+                    case unify resolved (TyApp (TyCon "Vector") elemTy) of
+                        Just newSub -> do
+                            putSubst (newSub @@ sub0)
+                            sub <- getSubst
+                            Prelude.pure
+                                ( lowerText (fieldBindingName fb)
+                                , applySubst sub elemTy
+                                )
+                        Nothing ->
+                            inferFail
+                                ( typeMismatchDiag
+                                    (fieldBindingSpan fb)
+                                    ( "dataframe column "
+                                        Prelude.<> T.pack (Prelude.show (lowerText (fieldBindingName fb)))
+                                        Prelude.<> " must be a Vector; got "
+                                        Prelude.<> showType resolved
+                                    )
+                                ))
                 binds
-        Prelude.pure (TyDataframe (Map.fromList fields))
+        Prelude.pure (TyDataframe (ungroupedDf (Map.fromList fields)))
     EVerb _ _ _ ->
         -- Verbs outside of a pipe context are typed as @forall a. a -> a@
         -- placeholders so usage like @filter pred xs@ still typechecks
@@ -688,169 +1030,414 @@ literalType = \case
 
 
 -- ---------------------------------------------------------------------
--- Operators (LANGUAGE.md section 8.8)
+-- Operators (LANGUAGE2.md section 8.8)
 -- ---------------------------------------------------------------------
 
 
 inferBinOp :: Env -> SourceSpan -> BinOp -> Expr -> Expr -> Infer Type
 inferBinOp env sp op l r = do
+    -- Static recycling check (M2.9): when both operands are vector
+    -- literals with statically-known lengths, reject mismatched
+    -- lengths up front so users see a friendly diagnostic instead
+    -- of R's silent recycling.
+    case (literalVectorLength l, literalVectorLength r) of
+        (Just nl, Just nr) | nl /= nr ->
+            inferFail
+                ( typeMismatchDiag sp
+                    ( "vector length mismatch: lhs has "
+                        Prelude.<> T.pack (Prelude.show nl)
+                        Prelude.<> " elements, rhs has "
+                        Prelude.<> T.pack (Prelude.show nr)
+                        Prelude.<> "; R would silently recycle, which is almost always a bug"
+                    )
+                )
+        _ -> Prelude.pure ()
     lt <- inferExprIn env l
     rt <- inferExprIn env r
     sub <- getSubst
     let
         lt' = applySubst sub lt
         rt' = applySubst sub rt
-    case op of
-        OpAdd -> sameNumeric sp lt' rt'
-        OpSub -> sameNumeric sp lt' rt'
-        OpMul -> sameNumeric sp lt' rt'
-        OpDiv -> sameNumeric sp lt' rt'
-        OpIntDiv -> bothInt sp lt' rt'
-        OpMod -> bothInt sp lt' rt'
-        OpExp -> bothDouble sp lt' rt'
-        OpEq -> comparison sp lt' rt'
-        OpNeq -> comparison sp lt' rt'
-        OpGt -> comparison sp lt' rt'
-        OpLt -> comparison sp lt' rt'
-        OpGe -> comparison sp lt' rt'
-        OpLe -> comparison sp lt' rt'
+    inferBinOpFromOverloads env sp op lt' rt'
 
 
-sameNumeric :: SourceSpan -> Type -> Type -> Infer Type
-sameNumeric sp l r =
-    case (l, r) of
-        _ | l Prelude.== primInteger Prelude.&& r Prelude.== primInteger ->
-            Prelude.pure primInteger
-        _ | l Prelude.== primDouble Prelude.&& r Prelude.== primDouble ->
-            Prelude.pure primDouble
-        -- If one side is still an unconstrained type variable, force
-        -- both sides to match the concrete side. This lets function
-        -- bodies use operators on parameters without an annotation
-        -- where the other side fixes the type.
-        (TyVarT _, TyCon "Integer") -> do
-            _ <- unifyAt sp l primInteger
-            Prelude.pure primInteger
-        (TyVarT _, TyCon "Double") -> do
-            _ <- unifyAt sp l primDouble
-            Prelude.pure primDouble
-        (TyCon "Integer", TyVarT _) -> do
-            _ <- unifyAt sp r primInteger
-            Prelude.pure primInteger
-        (TyCon "Double", TyVarT _) -> do
-            _ <- unifyAt sp r primDouble
-            Prelude.pure primDouble
-        -- Both sides are still unconstrained type variables. Unify
-        -- them so the result type follows the operands, register
-        -- both as numeric-pending, and let 'defaultPendingNumerics'
-        -- pick 'Double' at the decl boundary. This is what makes
-        -- @add a b <- a + b@ infer @Double -> Double -> Double@
-        -- without requiring an annotation.
-        (TyVarT _, TyVarT _) -> do
-            _ <- unifyAt sp l r
-            markNumeric l
-            markNumeric r
-            Prelude.pure l
-        _ ->
+-- | If @e@ is a literal vector (`[a, b, c]`), return its length.
+-- Anything else returns 'Nothing' (we can't statically reason about
+-- length).
+literalVectorLength :: Expr -> Maybe Prelude.Int
+literalVectorLength = \case
+    EVector _ items -> Just (Prelude.length items)
+    _ -> Nothing
+
+
+-- | Dispatch a binary operator against the prelude-declared overload
+-- table (LANGUAGE2.md section 8.8). Tries each declared overload in
+-- order and picks the first whose lhs/rhs types unify with the
+-- inferred operand types.
+--
+-- Defaulting (compiler-side, not prelude-defined): when both
+-- operands are unconstrained type variables, the dispatch defers to
+-- the @markNumeric@ pass so the decl-boundary defaulting step pins
+-- them to @Double@. This preserves the initial release behaviour where
+-- @add a b <- a + b@ infers @Double -> Double -> Double@.
+inferBinOpFromOverloads
+    :: Env
+    -> SourceSpan
+    -> BinOp
+    -> Type
+    -> Type
+    -> Infer Type
+inferBinOpFromOverloads env sp op lt rt =
+    let
+        overloads = lookupOperatorOverloads op env
+    in
+    if Prelude.null overloads
+        then
             inferFail
                 ( typeMismatchDiag sp
-                    ( "arithmetic operator expects Integer/Integer or Double/Double; got "
-                        Prelude.<> showType l
-                        Prelude.<> " and "
-                        Prelude.<> showType r
+                    ( "no overloads for operator "
+                        Prelude.<> T.pack (Prelude.show op)
+                        Prelude.<> "; the prelude is missing a corresponding `infix` declaration"
                     )
                 )
+        else if isUnconstrainedTyVar lt Prelude.&& isUnconstrainedTyVar rt
+            then defaultBothUnconstrained sp op lt rt overloads
+            else do
+                -- Instantiate each overload's tyvars fresh per call so
+                -- two `+` uses don't accidentally share the same `n`
+                -- binding via the global substitution (M3.11).
+                fresh <- Prelude.traverse freshenOverload overloads
+                case findMatchingOverload lt rt fresh of
+                    Just (newSub, resTy) -> do
+                        sub <- getSubst
+                        putSubst (newSub @@ sub)
+                        Prelude.pure (applySubst newSub resTy)
+                    Nothing ->
+                        inferFail
+                            ( typeMismatchDiag sp
+                                ( "no overload of "
+                                    Prelude.<> T.pack (Prelude.show op)
+                                    Prelude.<> " matches operands "
+                                    Prelude.<> showType lt
+                                    Prelude.<> " and "
+                                    Prelude.<> showType rt
+                                )
+                            )
 
 
-bothInt :: SourceSpan -> Type -> Type -> Infer Type
-bothInt sp l r =
-    case (l, r) of
-        _ | l Prelude.== primInteger Prelude.&& r Prelude.== primInteger ->
-            Prelude.pure primInteger
-        -- The result type is fixed at Integer, so any unconstrained
-        -- operand can be unified directly with Integer. No defaulting
-        -- is needed since the operator itself pins both sides.
-        (TyVarT _, _) | r Prelude.== primInteger -> do
-            _ <- unifyAt sp l primInteger
-            Prelude.pure primInteger
-        (_, TyVarT _) | l Prelude.== primInteger -> do
-            _ <- unifyAt sp r primInteger
-            Prelude.pure primInteger
-        (TyVarT _, TyVarT _) -> do
-            _ <- unifyAt sp l primInteger
-            _ <- unifyAt sp r primInteger
-            Prelude.pure primInteger
-        _ ->
+-- | Freshen an operator overload's free tyvars so each call site
+-- gets its own unifiable copy. Without this, a `forall n: Number. n
+-- -> n -> n` overload would persistently bind `n` to whatever the
+-- first call instantiated it to (M3.11).
+--
+-- Concrete overloads (e.g. `Integer -> Integer -> Integer`) have no
+-- free tyvars and pass through unchanged.
+freshenOverload :: OperatorOverload -> Infer OperatorOverload
+freshenOverload oo = do
+    let
+        free =
+            Set.toList
+                ( Set.unions
+                    [ freeTypeVars (ooLhs oo)
+                    , freeTypeVars (ooRhs oo)
+                    , freeTypeVars (ooResult oo)
+                    ]
+                )
+    pairs <-
+        Prelude.traverse
+            (\tv -> do
+                fresh <- freshVarC (tyVarConstraint tv) (tyVarName tv)
+                Prelude.pure (tv, fresh))
+            free
+    let sub = Map.fromList pairs
+    Prelude.pure
+        oo
+            { ooLhs = applySubst sub (ooLhs oo)
+            , ooRhs = applySubst sub (ooRhs oo)
+            , ooResult = applySubst sub (ooResult oo)
+            }
+
+
+freshenUnary :: UnaryOverload -> Infer UnaryOverload
+freshenUnary uo = do
+    let
+        free =
+            Set.toList
+                ( Set.union
+                    (freeTypeVars (uoOperand uo))
+                    (freeTypeVars (uoResult uo))
+                )
+    pairs <-
+        Prelude.traverse
+            (\tv -> do
+                fresh <- freshVarC (tyVarConstraint tv) (tyVarName tv)
+                Prelude.pure (tv, fresh))
+            free
+    let sub = Map.fromList pairs
+    Prelude.pure
+        uo
+            { uoOperand = applySubst sub (uoOperand uo)
+            , uoResult = applySubst sub (uoResult uo)
+            }
+
+
+-- | Find the first overload whose @ooLhs@ and @ooRhs@ unify with the
+-- inferred operand types. Returns the merged substitution (so the
+-- caller can commit it) and the overload's result type.
+--
+-- Operates purely on 'unify' (which returns 'Maybe Subst' without
+-- side effects), so it can speculatively try each overload without
+-- mutating the inferer's state.
+findMatchingOverload
+    :: Type
+    -> Type
+    -> [OperatorOverload]
+    -> Maybe (Subst, Type)
+findMatchingOverload lt rt = go
+  where
+    go [] = Nothing
+    go (oo : rest) =
+        case unify lt (ooLhs oo) of
+            Nothing -> go rest
+            Just s1 ->
+                let
+                    rt' = applySubst s1 rt
+                    rhs' = applySubst s1 (ooRhs oo)
+                in
+                case unify rt' rhs' of
+                    Nothing -> go rest
+                    Just s2 ->
+                        let merged = s2 @@ s1
+                        in Just (merged, applySubst merged (ooResult oo))
+
+
+-- | Both operands are unconstrained type variables; pick a
+-- "defaulting" overload to commit to. We prefer the @Double@ overload
+-- for arithmetic and comparison; if no @Double@-shaped overload
+-- exists, fall back to the first declared scalar one.
+--
+-- After picking, mark the type vars as numeric so the decl-boundary
+-- defaulting step pins them concretely (which keeps the
+-- @add a b <- a + b@ test passing without an annotation).
+defaultBothUnconstrained
+    :: SourceSpan
+    -> BinOp
+    -> Type
+    -> Type
+    -> [OperatorOverload]
+    -> Infer Type
+defaultBothUnconstrained sp _op lt rt overloads =
+    -- Prefer the overload whose lhs is `primDouble`. Fall back to
+    -- the first scalar overload if the operator has no Double rule
+    -- (none today, but defensive).
+    case List.find (\oo -> ooLhs oo Prelude.== primDouble) overloads of
+        Just oo -> commit oo
+        Nothing -> case List.find (\oo -> Prelude.not (isVectorTy (ooLhs oo))) overloads of
+            Just oo -> commit oo
+            Nothing ->
+                inferFail
+                    ( typeMismatchDiag sp
+                        "operator has no scalar default overload"
+                    )
+  where
+    commit oo = do
+        _ <- unifyAt sp lt (ooLhs oo)
+        _ <- unifyAt sp rt (ooRhs oo)
+        markNumeric lt
+        markNumeric rt
+        Prelude.pure (ooResult oo)
+
+
+isUnconstrainedTyVar :: Type -> Prelude.Bool
+isUnconstrainedTyVar = \case
+    TyVarT _ -> Prelude.True
+    _ -> Prelude.False
+
+
+isVectorTy :: Type -> Prelude.Bool
+isVectorTy = \case
+    TyApp (TyCon "Vector") _ -> Prelude.True
+    _ -> Prelude.False
+
+
+-- | Dispatch a unary operator against the prelude-declared overload
+-- table. Mirrors 'inferBinOpFromOverloads' but with one operand.
+inferUnaryFromOverloads
+    :: Env
+    -> SourceSpan
+    -> UnaryOp
+    -> Type
+    -> Infer Type
+inferUnaryFromOverloads env sp op operand =
+    let
+        overloads = lookupUnaryOverloads op env
+    in
+    if Prelude.null overloads
+        then
             inferFail
                 ( typeMismatchDiag sp
-                    ( "// and % require both operands to be Integer; got "
-                        Prelude.<> showType l
-                        Prelude.<> " and "
-                        Prelude.<> showType r
+                    ( "no overloads for unary operator "
+                        Prelude.<> T.pack (Prelude.show op)
                     )
                 )
+        else if isUnconstrainedTyVar operand
+            then defaultUnaryUnconstrained sp operand overloads
+            else do
+                fresh <- Prelude.traverse freshenUnary overloads
+                case findMatchingUnary operand fresh of
+                    Just (newSub, resTy) -> do
+                        sub <- getSubst
+                        putSubst (newSub @@ sub)
+                        Prelude.pure (applySubst newSub resTy)
+                    Nothing ->
+                        inferFail
+                            ( typeMismatchDiag sp
+                                ( "no overload of unary "
+                                    Prelude.<> T.pack (Prelude.show op)
+                                    Prelude.<> " matches operand "
+                                    Prelude.<> showType operand
+                                )
+                            )
 
 
-bothDouble :: SourceSpan -> Type -> Type -> Infer Type
-bothDouble sp l r =
-    case (l, r) of
-        _ | l Prelude.== primDouble Prelude.&& r Prelude.== primDouble ->
-            Prelude.pure primDouble
-        (TyVarT _, _) | r Prelude.== primDouble -> do
-            _ <- unifyAt sp l primDouble
-            Prelude.pure primDouble
-        (_, TyVarT _) | l Prelude.== primDouble -> do
-            _ <- unifyAt sp r primDouble
-            Prelude.pure primDouble
-        (TyVarT _, TyVarT _) -> do
-            _ <- unifyAt sp l primDouble
-            _ <- unifyAt sp r primDouble
-            Prelude.pure primDouble
-        _ ->
-            inferFail
-                ( typeMismatchDiag sp
-                    ( "^ requires both operands to be Double; got "
-                        Prelude.<> showType l
-                        Prelude.<> " and "
-                        Prelude.<> showType r
+findMatchingUnary
+    :: Type
+    -> [UnaryOverload]
+    -> Maybe (Subst, Type)
+findMatchingUnary operand = go
+  where
+    go [] = Nothing
+    go (uo : rest) =
+        case unify operand (uoOperand uo) of
+            Nothing -> go rest
+            Just s -> Just (s, applySubst s (uoResult uo))
+
+
+defaultUnaryUnconstrained
+    :: SourceSpan
+    -> Type
+    -> [UnaryOverload]
+    -> Infer Type
+defaultUnaryUnconstrained sp operand overloads =
+    case List.find (\uo -> uoOperand uo Prelude.== primDouble) overloads of
+        Just uo -> commit uo
+        Nothing -> case List.find (\uo -> Prelude.not (isVectorTy (uoOperand uo))) overloads of
+            Just uo -> commit uo
+            Nothing ->
+                inferFail
+                    ( typeMismatchDiag sp
+                        "unary operator has no scalar default overload"
                     )
-                )
-
-
-comparison :: SourceSpan -> Type -> Type -> Infer Type
-comparison sp l r =
-    case (l, r) of
-        _ | l Prelude.== r Prelude.&& isPrimComparable l ->
-            Prelude.pure primLogical
-        -- One side concrete and primitive-comparable: pin the other.
-        (TyVarT _, _) | isPrimComparable r -> do
-            _ <- unifyAt sp l r
-            Prelude.pure primLogical
-        (_, TyVarT _) | isPrimComparable l -> do
-            _ <- unifyAt sp r l
-            Prelude.pure primLogical
-        -- Both unconstrained: unify them so the result is consistent,
-        -- mark both as numeric-pending so the decl-boundary defaulting
-        -- step pins them to Double if nothing else has done so.
-        (TyVarT _, TyVarT _) -> do
-            _ <- unifyAt sp l r
-            markNumeric l
-            markNumeric r
-            Prelude.pure primLogical
-        _ ->
-            inferFail
-                ( typeMismatchDiag sp
-                    ( "comparison requires both operands to be the same primitive comparable type; got "
-                        Prelude.<> showType l
-                        Prelude.<> " and "
-                        Prelude.<> showType r
-                    )
-                )
+  where
+    commit uo = do
+        _ <- unifyAt sp operand (uoOperand uo)
+        markNumeric operand
+        Prelude.pure (uoResult uo)
 
 
 
 -- ---------------------------------------------------------------------
 -- Pattern inference
 -- ---------------------------------------------------------------------
+
+
+-- | Check that the patterns in a `case` cover every possible value
+-- of the scrutinee (LANGUAGE2.md section 8.4 invariant). Misses get a
+-- 'NonExhaustivePattern' diagnostic that lists the missing
+-- constructors.
+--
+-- Coverage rules:
+--
+--   * A 'PWildcard' or 'PVar' alone covers everything (always
+--     exhaustive).
+--   * A 'PCon' arm covers its own constructor; the case is
+--     exhaustive when every constructor of the scrutinee's ADT is
+--     covered by some arm.
+--   * Literal patterns and record patterns can't be enumerated
+--     statically (infinite or open domains), so a case that uses any
+--     of them MUST include a wildcard / var arm. Without one, we
+--     warn-as-error.
+--   * If the scrutinee type isn't a known ADT (e.g. a fresh type
+--     var, a function, a record), we don't enforce — there's nothing
+--     to enumerate against.
+checkExhaustiveness :: SourceSpan -> Env -> Type -> [CaseArm] -> Infer ()
+checkExhaustiveness sp env scrutTy arms
+    | hasCatchAll arms = Prelude.pure ()
+    | Prelude.otherwise = case typeAdtName scrutTy of
+        Nothing ->
+            -- Scrutinee isn't a known ADT. If patterns are all literal
+            -- or record without a catch-all, that's still exhaustive
+            -- only if the user knows the literal domain, which we
+            -- can't statically check. Soft-pass for initial release to avoid
+            -- false positives; tightening lands when we have richer
+            -- pattern types (M2.6).
+            Prelude.pure ()
+        Just tyName ->
+            let
+                -- Constructors of `tyName` declared in the env.
+                allCtors =
+                    [ name
+                    | (name, info) <- Map.toList (envConstructors env)
+                    , ciTypeName info Prelude.== tyName
+                    ]
+                covered = patternConstructors arms
+                missing = Prelude.filter
+                    (\c -> Prelude.not (c `Prelude.elem` covered))
+                    allCtors
+            in
+            case missing of
+                [] -> Prelude.pure ()
+                _ ->
+                    inferFail
+                        ( Diagnostic
+                            { diagSeverity = Error
+                            , diagCategory = NonExhaustivePattern
+                            , diagSpan = sp
+                            , diagMessage =
+                                "non-exhaustive `case` over "
+                                    Prelude.<> tyName
+                                    Prelude.<> ": missing constructor"
+                                    Prelude.<> (if Prelude.length missing Prelude.> 1 then "s " else " ")
+                                    Prelude.<> T.intercalate ", " missing
+                            , diagHint =
+                                Just
+                                    ( "add an arm for "
+                                        Prelude.<> T.intercalate " / " missing
+                                        Prelude.<> ", or a wildcard `_` arm to catch the rest"
+                                    )
+                            }
+                        )
+
+
+-- | True if the arm list has at least one wildcard or variable
+-- pattern, which catches everything.
+hasCatchAll :: [CaseArm] -> Prelude.Bool
+hasCatchAll = Prelude.any (isCatchAll Prelude.. caseArmPattern)
+  where
+    isCatchAll = \case
+        PWildcard _ -> Prelude.True
+        PVar _ -> Prelude.True
+        _ -> Prelude.False
+
+
+-- | If the type is a saturated application of an ADT constructor
+-- like @Maybe Integer@ or @Logical@, return its name. Otherwise
+-- return Nothing (the exhaustiveness checker has nothing to do).
+typeAdtName :: Type -> Maybe Text
+typeAdtName = \case
+    TyCon n -> Just n
+    TyApp f _ -> typeAdtName f
+    _ -> Nothing
+
+
+-- | Constructor names matched by the patterns of these arms.
+patternConstructors :: [CaseArm] -> [Text]
+patternConstructors arms =
+    Prelude.concatMap (constructorsOf Prelude.. caseArmPattern) arms
+  where
+    constructorsOf = \case
+        PCon _ n _ -> [upperText n]
+        _ -> []
 
 
 inferArm
@@ -868,6 +1455,14 @@ inferArm _caseSpan env scrutTy resultTy arm = do
                 (\e (n, t) -> insertValue n (monoScheme t) e)
                 env
                 bindings
+    -- Pattern guard (M3.3): typed in the post-pattern environment;
+    -- MUST be Logical.
+    case caseArmGuard arm of
+        Nothing -> Prelude.pure ()
+        Just g -> do
+            gTy <- inferExprIn env' g
+            _ <- unifyAt (caseArmSpan arm) gTy primLogical
+            Prelude.pure ()
     bodyTy <- inferExprIn env' (caseArmBody arm)
     _ <- unifyAt (caseArmSpan arm) resultTy bodyTy
     Prelude.pure ()
@@ -1013,8 +1608,10 @@ unify (TyFun a1 b1) (TyFun a2 b2) = do
 unify (TyRecord fs1) (TyRecord fs2)
     | Map.keysSet fs1 Prelude.== Map.keysSet fs2 = unifyFields fs1 fs2
     | Prelude.otherwise = Nothing
-unify (TyDataframe fs1) (TyDataframe fs2)
-    | Map.keysSet fs1 Prelude.== Map.keysSet fs2 = unifyFields fs1 fs2
+unify (TyDataframe shape1) (TyDataframe shape2)
+    | Map.keysSet (dfSchema shape1) Prelude.== Map.keysSet (dfSchema shape2)
+        Prelude.&& dfGroupingCols shape1 Prelude.== dfGroupingCols shape2 =
+        unifyFields (dfSchema shape1) (dfSchema shape2)
     | Prelude.otherwise = Nothing
 unify _ _ = Nothing
 
@@ -1035,8 +1632,22 @@ unifyFields a b =
 bindVar :: TyVar -> Type -> Maybe Subst
 bindVar v (TyVarT u)
     | v Prelude.== u = Just emptySubst
+    | Prelude.otherwise =
+        -- Two tyvars: combine their constraints. The result is the
+        -- more restrictive of the two (M3.11).
+        case combineConstraints (tyVarConstraint v) (tyVarConstraint u) of
+            Nothing -> Nothing  -- conflicting class constraints
+            Just c ->
+                let
+                    -- Bind v to a fresh-style tyvar that carries the
+                    -- combined constraint. Keep u's id and name to
+                    -- avoid renaming in error messages.
+                    merged = u {tyVarConstraint = c}
+                in
+                Just (Map.singleton v (TyVarT merged))
 bindVar v t
     | Set.member v (freeTypeVars t) = Nothing  -- occurs check
+    | Prelude.not (satisfiesConstraint (tyVarConstraint v) t) = Nothing
     | Prelude.otherwise = Just (Map.singleton v t)
 
 
@@ -1059,10 +1670,13 @@ freeTypeVarsEnvValues env =
 -- | Instantiate a scheme with fresh type variables.
 instantiate :: Scheme -> Infer Type
 instantiate sch = do
+    -- Each bound tyvar gets a fresh id; if it carries a class
+    -- constraint (M3.11), the fresh tyvar inherits it so unification
+    -- can enforce the constraint at the use site.
     pairs <-
         Prelude.traverse
             (\tv -> do
-                fresh <- freshVar (tyVarName tv)
+                fresh <- freshVarC (tyVarConstraint tv) (tyVarName tv)
                 Prelude.pure (tv, fresh))
             (schemeVars sch)
     let sub = Map.fromList pairs

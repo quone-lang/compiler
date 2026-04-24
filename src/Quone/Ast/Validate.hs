@@ -1,11 +1,11 @@
 {-| AST well-formedness validation.
 
-Enforces the nine invariants from LANGUAGE.md section 6.8:
+Enforces the nine invariants from LANGUAGE2.md section 6.8:
 
 1.  Module placement (only one module declaration; no inner one).
 2.  Export consistency (every name in @exporting (..)@ is defined).
 3.  Quone import visibility (the imported name is exported by the
-    source module). v0.0.1: deferred to the resolve stage which has
+    source module). initial release: deferred to the resolve stage which has
     cross-module info.
 4.  R-export discipline (a binding marked @\@export@ MUST appear in
     the module's @exporting (..)@ list).
@@ -54,6 +54,7 @@ validate :: Program -> [Diagnostic]
 validate prog =
     invariantExportConsistency prog
         ++ invariantRExportDiscipline prog
+        ++ invariantExternIsPreludeOnly prog
 
 
 -- | Convenience: validate and return either the program or the first
@@ -133,9 +134,18 @@ declNames = \case
     DImport d ->
         case d of
             QuoneImport _ _ sel -> selectionNames sel
-            ForeignImport _ fname _ -> [lowerText (foreignFn fname)]
+            ForeignImport _ _ fname _ -> [lowerText (foreignBindName fname)]
     DValue d ->
         [lowerText (valueDeclName d)]
+    DExtern d ->
+        case d of
+            ExternValue _ _ name _ _ _ -> [lowerText name]
+            ExternType _ name _ _ -> [upperText name]
+    DInfix _ ->
+        -- Operator overloads do not introduce new value-level names.
+        []
+    DPrefix _ ->
+        []
 
 
 selectionNames :: ImportSelection -> [Text]
@@ -204,3 +214,71 @@ hasExportTag (Just block) =
     Prelude.any
         (\line -> "@export" `T.isInfixOf` line)
         (docLines block)
+
+
+
+-- ---------------------------------------------------------------------
+-- Invariant: `extern` / `infix` / `prefix` are reserved for the
+-- embedded prelude (LANGUAGE2.md sections 4.5 and 10).
+-- ---------------------------------------------------------------------
+
+
+-- | Reject @extern@ / @infix@ / @prefix@ declarations in user code.
+-- The embedded prelude sets 'programIsPrelude' on its 'Program' so
+-- this check is a no-op when loading the prelude itself.
+invariantExternIsPreludeOnly :: Program -> [Diagnostic]
+invariantExternIsPreludeOnly prog =
+    if programIsPrelude prog
+        then []
+        else List.foldr
+            (\d acc -> case preludeOnlyDiag d of
+                Just diag -> diag : acc
+                Nothing -> acc)
+            []
+            (programDecls prog)
+
+
+preludeOnlyDiag :: Decl -> Maybe Diagnostic
+preludeOnlyDiag = \case
+    DExtern d ->
+        let
+            (sp, kind) = case d of
+                ExternValue s _ _ _ _ _ -> (s, "extern")
+                ExternType s _ _ _ -> (s, "extern type")
+        in
+        Just
+            ( Diagnostic
+                { diagSeverity = Error
+                , diagCategory = Parse
+                , diagSpan = sp
+                , diagMessage =
+                    "`"
+                        Prelude.<> kind
+                        Prelude.<> "` declarations are reserved for the embedded prelude"
+                , diagHint =
+                    Just "use `import pkg.fn : ...` to bind a foreign R function in user code (LANGUAGE2.md section 4.5)"
+                }
+            )
+    DInfix d ->
+        Just
+            ( Diagnostic
+                { diagSeverity = Error
+                , diagCategory = Parse
+                , diagSpan = infixDeclSpan d
+                , diagMessage =
+                    "`infix` declarations are reserved for the embedded prelude"
+                , diagHint = Nothing
+                }
+            )
+    DPrefix d ->
+        Just
+            ( Diagnostic
+                { diagSeverity = Error
+                , diagCategory = Parse
+                , diagSpan = prefixDeclSpan d
+                , diagMessage =
+                    "`prefix` declarations are reserved for the embedded prelude"
+                , diagHint = Nothing
+                }
+            )
+    _ -> Nothing

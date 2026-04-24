@@ -98,7 +98,7 @@ declSymbols binds = \case
             , symType = Prelude.Nothing
             }
         ]
-    Ast.DImport (Ast.ForeignImport sp f _) ->
+    Ast.DImport (Ast.ForeignImport sp _ f _) ->
         [ Symbol
             { symName = Ast.lowerText (Ast.foreignFn f)
             , symKind = SymForeign
@@ -107,6 +107,33 @@ declSymbols binds = \case
             , symType = Map.lookup (Ast.lowerText (Ast.foreignFn f)) binds
             }
         ]
+    Ast.DExtern (Ast.ExternValue sp _ name _ _ mDoc) ->
+        let
+            nm = Ast.lowerText name
+        in
+        [ Symbol
+            { symName = nm
+            , symKind = SymValue
+            , symSpan = sp
+            , symDoc = docLines_ mDoc
+            , symType = Map.lookup nm binds
+            }
+        ]
+    Ast.DExtern (Ast.ExternType sp name _ mDoc) ->
+        [ Symbol
+            { symName = Ast.upperText name
+            , symKind = SymType
+            , symSpan = sp
+            , symDoc = docLines_ mDoc
+            , symType = Prelude.Nothing
+            }
+        ]
+    Ast.DInfix _ ->
+        -- Operator overloads are typed-only; the LSP surfaces the
+        -- operator at use sites via the parser's 'EBinOp' span.
+        []
+    Ast.DPrefix _ ->
+        []
 
 
 variantSymbol :: Ast.Variant -> Symbol
@@ -217,7 +244,14 @@ renderTypePrec prec = \case
         in
         if prec Prelude.> 0 then "(" ++ inner ++ ")" else inner
     Ty.TyRecord fs -> "{ " ++ renderRecord fs ++ " }"
-    Ty.TyDataframe fs -> "dataframe { " ++ renderRecord fs ++ " }"
+    Ty.TyDataframe shape ->
+        let
+            base = "dataframe { " ++ renderRecord (Ty.dfSchema shape) ++ " }"
+            grouping = case Ty.dfGroupingCols shape of
+                [] -> ""
+                gs -> " grouped by " ++ T.intercalate ", " gs
+        in
+        base ++ grouping
 
 
 renderRecord :: Map.Map Text Ty.Type -> Text

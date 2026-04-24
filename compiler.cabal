@@ -1,14 +1,21 @@
 cabal-version: 3.0
 name:          compiler
-version:       0.0.0.1
+version:       0.0.1
 synopsis:      The Quone language compiler.
 description:
-    The Quone language compiler. Implements LANGUAGE.md v0.0.1: lexer,
-    parser, AST, name resolution, Hindley-Milner type checker, dataframe
-    verb typing, and R code generation (script and package modes).
+    The Quone language compiler. Implements the initial release specified
+    by docs/LANGUAGE2.md: lexer, parser, AST, name resolution,
+    type checking, dataframe verb typing, CSV decoding, formatting,
+    LSP support, and readable R code generation.
 license:       MIT
 license-file:  LICENSE
 build-type:    Simple
+
+-- Files referenced by `Data.FileEmbed.embedFile` and similar TH
+-- splices must be listed here so cabal includes them in the source
+-- distribution and makes them available at build time.
+extra-source-files:
+    prelude/Prelude.Q
 
 common shared
     default-language:   Haskell2010
@@ -44,20 +51,15 @@ library
         Quone.Type.Env
         Quone.Type.Infer
         Quone.Type.Verb
+        Quone.Prelude.Embed
+        Quone.Prelude.Load
         Quone.Generate.Pretty
         Quone.Generate.R
-        Quone.Generate.Module
-        Quone.Generate.Package
         Quone.Generate.SourceMap
         Quone.Format.Doc
         Quone.Format.Trivia
         Quone.Format.Rules
         Quone.Format.Format
-        Quone.Repl.Driver
-        Quone.Repl.Input
-        Quone.Repl.Meta
-        Quone.Repl.RBackend
-        Quone.Repl.Session
         Quone.Lsp.Json
         Quone.Lsp.Protocol
         Quone.Lsp.State
@@ -72,6 +74,7 @@ library
         , bytestring
         , containers
         , directory
+        , file-embed
         , filepath
         , megaparsec   >= 9.0 && < 10
         , nri-prelude  ^>=0.6.1.2
@@ -94,25 +97,16 @@ test-suite quonec-test
     hs-source-dirs:   tests
     main-is:          Spec.hs
     other-modules:
+        Test.CliTests
+        Test.FormatTests
+        Test.GenerateTests
         Test.Harness
         Test.LexTests
+        Test.LspTests
         Test.ParseTests
-        Test.AstTests
-        Test.ResolveTests
+        Test.ReleaseTests
         Test.TypeTests
         Test.VerbTests
-        Test.GenerateTests
-        Test.PackageTests
-        Test.CorpusTests
-        Test.PropertyTests
-        Test.JsonDiagnosticTests
-        Test.SourceMapTests
-        Test.FormatTests
-        Test.FormatSnapshotTests
-        Test.ReplTests
-        Test.ScenarioTests
-        Test.LspTests
-        Test.CliTests
     build-depends:
         , base         ^>=4.21.0.0
         , bytestring

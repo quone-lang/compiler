@@ -12,22 +12,17 @@ module Quone.Cli.Commands
     ( cmdVersion
     , cmdCheck
     , cmdBuild
-    , cmdBuildPackage
-    , cmdRun
-    , cmdDeps
+    , cmdCompileDir
     , cmdFmt
-    , cmdNew
-    , cmdRepl
       -- * shared helpers
     , compileScript
-    , compilePackage
-    , writePackage
     , emitDiagnostic
     , emitDiagnostics
     )
 where
 
 import qualified Control.Monad as CMonad
+import Data.Foldable (traverse_)
 import qualified Data.List as List
 import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
@@ -42,28 +37,16 @@ import Quone.Diagnostic
     )
 import qualified Quone.Diagnostic.Json as DiagJson
 import qualified Quone.Format.Format as Fmt
-import Quone.Generate.Module (generateModule, ModuleArtifact (..))
-import Quone.Generate.Package
-    ( PackageArtifact (..)
-    , defaultPackageInputs
-    , generatePackage
-    )
 import Quone.Generate.R (generateProgram)
-import Quone.Generate.SourceMap
-    ( SourceMap (..)
-    , buildSourceMap
-    , encodeSourceMap
-    )
 import Quone.Parse.Desugar (desugarFile)
-import qualified Quone.Position as Position
-import qualified Quone.Repl.Driver as Repl
-import qualified Quone.Resolve.Project as Project
-import Quone.Type.Infer (inferProgram)
+import Quone.Prelude.Load (LoadedPrelude (..), loadPrelude)
+import Quone.Type.Infer
+    ( inferProgramFrom
+    )
 import qualified System.Directory as Dir
 import qualified System.Exit as Exit
 import qualified System.FilePath as FP
 import qualified System.IO as IO
-import qualified System.Process as Proc
 import qualified Prelude
 
 
@@ -99,16 +82,15 @@ cmdCheck fmt path = do
 cmdBuild
     :: DiagnosticsFormat
     -> Maybe Prelude.FilePath
-    -> Prelude.Bool
     -> Prelude.FilePath
     -> Prelude.IO Exit.ExitCode
-cmdBuild fmt outDir sourcemap path = do
+cmdBuild fmt outDir path = do
     src <- TIO.readFile path
     case compileScript (T.pack path) src of
         Prelude.Left d -> do
             emitDiagnostic fmt d
             Prelude.pure (Exit.ExitFailure 1)
-        Prelude.Right (prog, rcode) -> do
+        Prelude.Right (_prog, rcode) -> do
             let
                 outPath = case outDir of
                     Prelude.Nothing -> FP.replaceExtension path "R"
@@ -118,7 +100,6 @@ cmdBuild fmt outDir sourcemap path = do
                                 (FP.replaceExtension path "R")
             Dir.createDirectoryIfMissing Prelude.True (FP.takeDirectory outPath)
             TIO.writeFile outPath rcode
-            CMonad.when sourcemap (writeSourceMap path outPath prog rcode)
             case fmt of
                 JsonDiagnostics -> Prelude.pure Exit.ExitSuccess
                 HumanDiagnostics -> do
@@ -126,152 +107,21 @@ cmdBuild fmt outDir sourcemap path = do
                     Prelude.pure Exit.ExitSuccess
 
 
--- | Compile and then optionally invoke @Rscript@ on the result.
---
--- When @rscript@ is 'Prelude.False' the command keeps its v0.0.1
--- behaviour of just printing the suggested @Rscript ...@ command. When
--- 'Prelude.True' it shells out to @Rscript@ and returns its exit code.
-cmdRun
+cmdCompileDir
     :: DiagnosticsFormat
     -> Maybe Prelude.FilePath
-    -> Prelude.Bool
-    -> Prelude.Bool
     -> Prelude.FilePath
     -> Prelude.IO Exit.ExitCode
-cmdRun fmt outDir sourcemap rscript path = do
-    code <- cmdBuild fmt outDir sourcemap path
-    case code of
-        Exit.ExitSuccess -> do
-            let
-                outPath = case outDir of
-                    Prelude.Nothing -> FP.replaceExtension path "R"
-                    Just dir ->
-                        dir
-                            FP.</> FP.takeFileName
-                                (FP.replaceExtension path "R")
-            if rscript
-                then do
-                    (_, _, _, ph) <-
-                        Proc.createProcess
-                            (Proc.proc "Rscript" [outPath])
-                    Proc.waitForProcess ph
-                else do
-                    CMonad.when
-                        (fmt Prelude.== HumanDiagnostics)
-                        (TIO.putStrLn
-                            ( T.pack
-                                ( "Run with: Rscript " Prelude.++ outPath)))
-                    Prelude.pure Exit.ExitSuccess
-        other -> Prelude.pure other
-
-
--- | Build a multi-module Quone project into an R package directory
--- tree under @<projectDir>/build/@ (or @<outDir>@ when set).
---
--- Layout per LANGUAGE.md section 14.6:
---
---     build/
---       DESCRIPTION
---       NAMESPACE
---       R/
---         <module>.R   (one per .Q file, kebab-cased)
---
--- @roxygen2::roxygenise@ should be invoked over the resulting
--- directory to generate @man/@ entries; the CLI prints the suggested
--- command on success.
-cmdBuildPackage
-    :: DiagnosticsFormat
-    -> Maybe Prelude.FilePath
-    -> Prelude.Bool
-    -> Prelude.FilePath
-    -> Prelude.IO Exit.ExitCode
-cmdBuildPackage fmt outDir _sourcemap projectDir = do
-    result <- compilePackage projectDir
-    case result of
-        Prelude.Left d -> do
-            emitDiagnostic fmt d
-            Prelude.pure (Exit.ExitFailure 1)
-        Prelude.Right pa -> do
-            let
-                outRoot = case outDir of
-                    Just d -> d
-                    Prelude.Nothing -> projectDir FP.</> "build"
-            writePackage outRoot pa
-            case fmt of
-                JsonDiagnostics -> Prelude.pure Exit.ExitSuccess
-                HumanDiagnostics -> do
-                    TIO.putStrLn (T.pack ("wrote " Prelude.++ outRoot))
-                    TIO.putStrLn
-                        ( T.pack
-                            ( "Generate man/ with: R -e \"roxygen2::roxygenise('"
-                                Prelude.++ outRoot
-                                Prelude.++ "')\""
-                            )
-                        )
-                    Prelude.pure Exit.ExitSuccess
-
-
--- | Print the auto-derived runtime dependency set for a project.
---
--- Implements LANGUAGE.md section 13.9: the set is the union of all R
--- packages the compiled output calls. Output format mirrors NDJSON
--- when 'JsonDiagnostics' is selected, one JSON object per line:
---
--- @
--- {"package":"dplyr"}
--- {"package":"purrr"}
--- {"package":"readr"}
--- @
---
--- The human format prints one package name per line.
-cmdDeps :: DiagnosticsFormat -> Prelude.FilePath -> Prelude.IO Exit.ExitCode
-cmdDeps fmt projectDir = do
-    result <- compilePackage projectDir
-    case result of
-        Prelude.Left d -> do
-            emitDiagnostic fmt d
-            Prelude.pure (Exit.ExitFailure 1)
-        Prelude.Right pa -> do
-            let
-                deps = paDependencies pa
-            case fmt of
-                JsonDiagnostics ->
-                    Prelude.mapM_ (TIO.putStrLn Prelude.. depJson) deps
-                HumanDiagnostics ->
-                    Prelude.mapM_ TIO.putStrLn deps
-            Prelude.pure Exit.ExitSuccess
-
-
-depJson :: Text -> Text
-depJson pkg =
-    "{\"package\":\""
-        Prelude.<> T.replace "\"" "\\\"" pkg
-        Prelude.<> "\"}"
-
-
--- | Write a 'PackageArtifact' to a directory tree.
-writePackage
-    :: Prelude.FilePath
-    -> PackageArtifact
-    -> Prelude.IO ()
-writePackage outDir pa = do
-    Dir.createDirectoryIfMissing Prelude.True outDir
-    Dir.createDirectoryIfMissing Prelude.True (outDir FP.</> "R")
-    TIO.writeFile (outDir FP.</> "DESCRIPTION") (paDescription pa)
-    TIO.writeFile (outDir FP.</> "NAMESPACE") (paNamespace pa)
-    Prelude.mapM_
-        (\m -> do
-            let
-                target = outDir FP.</> artifactPath m
-            Dir.createDirectoryIfMissing Prelude.True (FP.takeDirectory target)
-            TIO.writeFile target (artifactBody m))
-        (paModules pa)
+cmdCompileDir fmt outDir dir = do
+    qFiles <- listSourceFiles dir
+    codes <- Prelude.traverse (cmdBuild fmt outDir) qFiles
+    Prelude.pure (combineExit codes)
 
 
 -- | Format a .Q file in place.
 --
 -- Wraps the elm-format-style formatter in 'Quone.Format.Format'. See
--- LANGUAGE.md section 3.2.1 (naming conventions) and the planned
+-- LANGUAGE2.md section 3.2.1 (naming conventions) and the planned
 -- canonical layout rules described in the project plan.
 cmdFmt :: Prelude.FilePath -> Prelude.IO Exit.ExitCode
 cmdFmt path = do
@@ -307,47 +157,6 @@ combineExit = Prelude.foldr step Exit.ExitSuccess
     step e _ = e
 
 
--- | Scaffold a new project: a quone.toml plus src/Main.Q.
-cmdNew :: Prelude.FilePath -> Prelude.IO Exit.ExitCode
-cmdNew name = do
-    let
-        root = name
-        srcDir = root FP.</> "src"
-        toml = root FP.</> "quone.toml"
-        main_ = srcDir FP.</> "Main.Q"
-
-        tomlContent =
-            T.unlines
-                [ "[package]"
-                , "name = \"" Prelude.<> T.pack name Prelude.<> "\""
-                , "version = \"0.0.1\""
-                ]
-        mainContent =
-            T.unlines
-                [ "module Main exporting (main)"
-                , ""
-                , "#' Entry point."
-                , "#' @export"
-                , "main <- 1 + 1"
-                ]
-
-    Dir.createDirectoryIfMissing Prelude.True srcDir
-    TIO.writeFile toml tomlContent
-    TIO.writeFile main_ mainContent
-    TIO.putStrLn (T.pack ("created " Prelude.++ root))
-    Prelude.pure Exit.ExitSuccess
-
-
--- | Start an interactive REPL session.
---
--- Delegates to 'Quone.Repl.Driver.runRepl' which spawns a long-lived
--- @Rscript@ subprocess and feeds it the lowering of every entered
--- expression.
-cmdRepl :: Prelude.IO Exit.ExitCode
-cmdRepl = Repl.runRepl Repl.defaultOpts
-
-
-
 -- ---------------------------------------------------------------------
 -- Diagnostic emission
 -- ---------------------------------------------------------------------
@@ -364,31 +173,6 @@ emitDiagnostic fmt d = case fmt of
 emitDiagnostics :: DiagnosticsFormat -> [Diagnostic] -> Prelude.IO ()
 emitDiagnostics fmt = Prelude.mapM_ (emitDiagnostic fmt)
 
-
-
--- ---------------------------------------------------------------------
--- Source map writer
--- ---------------------------------------------------------------------
-
-
-writeSourceMap
-    :: Prelude.FilePath
-    -> Prelude.FilePath
-    -> Program
-    -> Text
-    -> Prelude.IO ()
-writeSourceMap srcPath outPath prog _rcode =
-    let
-        sm =
-            SourceMap
-                { smGenerated = outPath
-                , smSource = srcPath
-                , smEntries = buildSourceMap prog
-                }
-    in
-    TIO.writeFile (outPath Prelude.++ ".map") (encodeSourceMap sm)
-
-
 -- ---------------------------------------------------------------------
 -- Pipeline drivers
 -- ---------------------------------------------------------------------
@@ -396,74 +180,24 @@ writeSourceMap srcPath outPath prog _rcode =
 
 -- | Compile one source file. Returns the typed AST and emitted R, or
 -- the first diagnostic produced.
+--
+-- The embedded prelude is loaded once at the start of compilation
+-- (see 'Quone.Prelude.Load.loadPrelude'); its typing environment
+-- seeds the user-program inference. A failure to load the prelude
+-- itself is treated as a compiler-development bug surfaced as the
+-- first diagnostic.
 compileScript
     :: Text                                  -- ^ filename for diagnostics
     -> Text                                  -- ^ source contents
     -> Prelude.Either Diagnostic (Program, Text)
 compileScript filename src = do
+    loaded <- loadPrelude
     prog <- desugarFile filename src
     case validate prog of
         (d : _) -> Prelude.Left d
         [] -> Prelude.pure ()
-    _typed <- inferProgram prog
+    _typed <- inferProgramFrom (preludeEnv loaded) prog
     Prelude.pure (prog, generateProgram prog)
-
-
--- | Compile a multi-module project rooted at @projectDir@.
---
--- Looks for @quone.toml@ in the directory, parses it, then walks
--- @src\/**\/*.Q@ and produces a 'PackageArtifact'. The CLI is
--- responsible for writing the artifact to disk (and shelling out to
--- @roxygen2@ if requested).
-compilePackage
-    :: Prelude.FilePath
-    -> Prelude.IO (Prelude.Either Diagnostic PackageArtifact)
-compilePackage projectDir = do
-    let tomlPath = projectDir FP.</> "quone.toml"
-    tomlExists <- Dir.doesFileExist tomlPath
-    if Prelude.not tomlExists
-        then
-            Prelude.pure
-                ( Prelude.Left
-                    Diagnostic
-                        { diagSeverity = Diag.Error
-                        , diagCategory = Diag.FileLoading
-                        , diagSpan = Position.emptySpan
-                        , diagMessage = "no quone.toml found in " Prelude.<> T.pack projectDir
-                        , diagHint = Just "run `quonec new <name>` first"
-                        }
-                )
-        else do
-            tomlSrc <- TIO.readFile tomlPath
-            case Project.parseProjectToml (T.pack tomlPath) tomlSrc of
-                Prelude.Left d -> Prelude.pure (Prelude.Left d)
-                Prelude.Right proj -> do
-                    qFiles <- listSourceFiles (projectDir FP.</> "src")
-                    progs <- Prelude.traverse readProgram qFiles
-                    case sequenceErrors progs of
-                        Prelude.Left d -> Prelude.pure (Prelude.Left d)
-                        Prelude.Right okProgs ->
-                            Prelude.pure
-                                (generatePackage
-                                    (defaultPackageInputs proj okProgs))
-
-
-readProgram
-    :: Prelude.FilePath
-    -> Prelude.IO (Prelude.Either Diagnostic Program)
-readProgram path = do
-    src <- TIO.readFile path
-    Prelude.pure (desugarFile (T.pack path) src)
-
-
-sequenceErrors
-    :: [Prelude.Either Diagnostic a]
-    -> Prelude.Either Diagnostic [a]
-sequenceErrors = List.foldr step (Prelude.Right [])
-  where
-    step (Prelude.Left d) _ = Prelude.Left d
-    step (Prelude.Right _) (Prelude.Left d) = Prelude.Left d
-    step (Prelude.Right x) (Prelude.Right xs) = Prelude.Right (x : xs)
 
 
 -- | Find every .Q file under a directory, recursively.

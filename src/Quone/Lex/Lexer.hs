@@ -1,6 +1,6 @@
 {-| Lexer for Quone source files.
 
-Implements LANGUAGE.md section 3 in full:
+Implements LANGUAGE2.md section 3 in full:
 
 * identifiers (3.2): ASCII letter start, no leading @_@, @.@ reserved
   for field access;
@@ -173,7 +173,7 @@ oneToken filename =
 
 -- | A lone `_` lexes as the wildcard token (used in patterns). Any
 -- other identifier-like token starting with `_` falls through to
--- 'identOrKeyword', which rejects it per LANGUAGE.md section 3.2.
+-- 'identOrKeyword', which rejects it per LANGUAGE2.md section 3.2.
 wildcardOrIdent :: Text -> Lexer (Located Token)
 wildcardOrIdent filename =
     located filename <| do
@@ -199,7 +199,7 @@ skipPlain _ =
     PL.space
         (void (P.takeWhile1P Nothing isPlainSpace))
         lineComment
-        P.empty
+        blockComment
   where
     isPlainSpace c = c == ' ' || c == '\t' || c == '\n' || c == '\r'
 
@@ -213,6 +213,42 @@ lineComment = P.try <| do
     _ <- PC.char '#'
     P.notFollowedBy (PC.char '\'')
     void (P.takeWhileP Nothing (\c -> c /= '\n'))
+
+
+-- | A nestable block comment @{- ... -}@ (M3.2). Like Haskell's,
+-- block comments may nest; this lets users wrap a region of source
+-- (which itself may contain a block comment) without manually
+-- balancing markers.
+--
+-- The opening @{-@ commits (no rollback if the body is malformed or
+-- unterminated), so an unterminated block comment is reported as a
+-- proper lex error rather than silently leaving @{@ as a brace
+-- token.
+blockComment :: Lexer ()
+blockComment = do
+    _ <- P.try (PC.string "{-")
+    blockCommentBody P.<?> "closing -} for block comment"
+
+
+blockCommentBody :: Lexer ()
+blockCommentBody = do
+    -- Eat anything up to the next `{-`, `-}`, or end-of-input.
+    _ <- P.takeWhileP Nothing (\c -> c /= '{' Prelude.&& c /= '-')
+    next <- P.lookAhead P.anySingle
+    case next of
+        '-' -> do
+            -- Could be the close `-}`; otherwise consume one `-` and continue.
+            mClose <- P.optional (P.try (PC.string "-}"))
+            case mClose of
+                Just _ -> Prelude.pure ()
+                Nothing -> P.anySingle *> blockCommentBody
+        '{' -> do
+            -- Could open a nested block comment; otherwise consume one `{`.
+            mOpen <- P.optional (P.try (PC.string "{-"))
+            case mOpen of
+                Just _ -> blockCommentBody *> blockCommentBody
+                Nothing -> P.anySingle *> blockCommentBody
+        _ -> P.anySingle *> blockCommentBody
 
 
 
@@ -305,19 +341,59 @@ punctuation filename =
 -- ---------------------------------------------------------------------
 
 
--- | Quone v0.0.1 has no escape sequences specified beyond what R itself
--- accepts; for now we accept a single-line string with no escapes.
--- (Section 18.1 leaves richer string handling deferred.)
+-- | String literal with escape support (M3.1).
+--
+-- Recognised escape sequences (matching R's own string-literal rules
+-- and the LANGUAGE2.md section 3.3 update):
+--
+--   * @\\n@    newline
+--   * @\\t@    tab
+--   * @\\r@    carriage return
+--   * @\\\\@   backslash
+--   * @\\"@    double quote
+--   * @\\u{XXXX}@ Unicode code point (1\u20136 hex digits)
+--
+-- Unrecognised escapes (e.g. @\\q@) are a lex error rather than
+-- silently letting the backslash pass through; this matches Elm's
+-- discipline and avoids a class of runtime surprises.
 stringLiteral :: Text -> Lexer (Located Token)
 stringLiteral filename =
     located filename <| do
         _ <- PC.char '"'
-        body <- P.takeWhileP (Just "string character") (\c -> c /= '"' && c /= '\n')
+        chunks <- P.many stringChar
         _ <- PC.char '"' P.<?> "closing double quote"
-        Prelude.pure (TStringLit body)
+        Prelude.pure (TStringLit (T.concat chunks))
 
 
--- | Numeric literal. Per LANGUAGE.md section 3.3, Quone follows R's
+stringChar :: Lexer Text
+stringChar = (escape P.<|> plain) P.<?> "string character"
+  where
+    plain =
+        T.singleton <$> P.satisfy (\c -> c /= '"' && c /= '\\' && c /= '\n')
+    escape = do
+        _ <- PC.char '\\'
+        c <- P.anySingle
+        case c of
+            'n' -> Prelude.pure "\n"
+            't' -> Prelude.pure "\t"
+            'r' -> Prelude.pure "\r"
+            '\\' -> Prelude.pure "\\"
+            '"' -> Prelude.pure "\""
+            'u' -> do
+                _ <- PC.char '{'
+                hex <- P.takeWhile1P (Just "hex digit") Char.isHexDigit
+                _ <- PC.char '}'
+                let code = Prelude.read ("0x" Prelude.++ T.unpack hex) :: Prelude.Int
+                Prelude.pure (T.singleton (Char.chr code))
+            other ->
+                P.fancyFailure
+                    ( Set.singleton
+                        (P.ErrorFail
+                            ("unknown escape sequence \\" Prelude.++ [other]))
+                    )
+
+
+-- | Numeric literal. Per LANGUAGE2.md section 3.3, Quone follows R's
 -- convention:
 --
 -- * @1@      lexes as 'TFloatLit' (Double). Bare digit runs are doubles
@@ -380,7 +456,7 @@ numericLiteral filename =
 
 
 -- | An identifier is a letter followed by letters, digits, and @_@.
--- Per LANGUAGE.md section 3.2 a leading @_@ is not permitted (R does
+-- Per LANGUAGE2.md section 3.2 a leading @_@ is not permitted (R does
 -- not allow it).
 identOrKeyword :: Text -> Lexer (Located Token)
 identOrKeyword filename =
@@ -490,8 +566,8 @@ lexErrorToDiagnostic filename bundle =
 {- | Convert significant indentation into 'TNewline' / 'TIndent' /
 'TDedent' tokens.
 
-The rule is simple and intentionally conservative for v0.0.1
-(LANGUAGE.md sections 3.7 and 19.1):
+The rule is simple and intentionally conservative for initial release
+(LANGUAGE2.md sections 3.7 and 19.1):
 
 * Blank lines are skipped.
 * When a line's indent is greater than the top of the indent stack we

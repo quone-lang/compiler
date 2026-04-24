@@ -1,6 +1,6 @@
 # Quone Formatter - Version 0.0.1
 
-**Status:** Normative for the v0.0.1 surface where rules are stated as
+**Status:** Normative for the initial release surface where rules are stated as
 MUST or SHOULD. Anything labelled `[planned]` is informative.
 
 **Audience:** Authors of `quonec fmt`, IDE/format-on-save integrators,
@@ -11,7 +11,7 @@ what `quonec fmt` produces, what it preserves, and the snapshot-fixture
 discipline that pins each rule to a runnable test. Deltas from
 [elm-format](https://github.com/avh4/elm-format) are listed
 explicitly. The language itself is defined in
-[LANGUAGE.md](LANGUAGE.md); the `quonec fmt` CLI flag in
+[LANGUAGE2.md](LANGUAGE2.md); the `quonec fmt` CLI flag in
 [CLI.md section 3](CLI.md#3-subcommands).
 
 ---
@@ -121,7 +121,7 @@ Specifically:
 - **Trailing `#` comment.** A `#` comment after the last declaration
   MUST appear at the bottom of the formatted output.
 - **Doc-block `#'` comment.** A run of `#'` lines immediately preceding
-  a top-level declaration ([LANGUAGE.md section 3.6](LANGUAGE.md#36-comments))
+  a top-level declaration ([LANGUAGE2.md section 3.6](LANGUAGE2.md#36-comments))
   MUST stay flush against the declaration it documents (no blank line
   between).
 
@@ -380,7 +380,7 @@ always be discussed in the same PR that changes the formatter.
 
 ## See also
 
-- [LANGUAGE.md](LANGUAGE.md) - the Quone language proper (lex, syntax, types).
+- [LANGUAGE2.md](LANGUAGE2.md) - the Quone language proper (lex, syntax, types).
 - [CLI.md](CLI.md) - the `quonec` command-line surface, including `fmt`.
 - [COMPILATION.md](COMPILATION.md) - lowering rules.
-- [IDE.md](IDE.md) - LSP/REPL surfaces (the LSP server runs the formatter on textDocument/formatting requests).
+- [LANGUAGE2.md](LANGUAGE2.md) - initial release language specification.

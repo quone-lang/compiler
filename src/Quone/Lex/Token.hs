@@ -1,6 +1,6 @@
 {-| The token type emitted by the lexer.
 
-Mirrors LANGUAGE.md sections 3.3 (literals), 3.4 (keywords), and 3.5
+Mirrors LANGUAGE2.md sections 3.3 (literals), 3.4 (keywords), and 3.5
 (operators / punctuation). Doc-comment groups produced by section 3.6
 are emitted as 'TDocBlock' tokens carrying their already-stripped
 text.
@@ -93,7 +93,7 @@ data Token
     deriving (Prelude.Show, Prelude.Eq)
 
 
--- | Reserved keywords from LANGUAGE.md section 3.4.
+-- | Reserved keywords from LANGUAGE2.md section 3.4.
 --
 -- Categorised in source order: framework keywords, dataframe DSL
 -- keywords (verbs and the @dataframe@ type former), then the modifier
@@ -123,22 +123,9 @@ data Keyword
     | KUngroup
     | KArrange
     | KRename
-    | KDistinct
-    | KDistinctAll
-    | KCount
-    | KSlice
-    | KPull
-    | KRelocate
-    | KTransmute
-    | KMutateEach
-    | KSummarizeEach
     | KLeftJoin
     | KRightJoin
     | KInnerJoin
-    | KFullJoin
-    | KAntiJoin
-    | KSemiJoin
-    | KCrossJoin
     | -- Dataframe modifiers
       KDesc
     | KAsc
@@ -146,6 +133,22 @@ data Keyword
     | KAs
     | KWhere
     | KCols
+    | -- Foreign-import classification modifiers (LANGUAGE2.md section 4.5)
+      KElementwise
+    | KReducer
+    | -- Prelude-only declarations (compiler-supplied bindings, written
+      -- in the embedded @Prelude.Q@ source). User code may not use
+      -- these; the parser rejects them outside the prelude.
+      KExtern
+    | KInfix
+    | KPrefix
+    | KLeft
+    | KRight
+    | KNon
+    | -- Type annotation modifier (M3.5).
+      KForall
+    | -- Foreign-import call template (M3.9).
+      KVia
     deriving (Prelude.Show, Prelude.Eq, Prelude.Ord, Prelude.Enum, Prelude.Bounded)
 
 
@@ -173,28 +176,25 @@ keywordText = \case
     KUngroup -> "ungroup"
     KArrange -> "arrange"
     KRename -> "rename"
-    KDistinct -> "distinct"
-    KDistinctAll -> "distinct_all"
-    KCount -> "count"
-    KSlice -> "slice"
-    KPull -> "pull"
-    KRelocate -> "relocate"
-    KTransmute -> "transmute"
-    KMutateEach -> "mutate_each"
-    KSummarizeEach -> "summarize_each"
     KLeftJoin -> "left_join"
     KRightJoin -> "right_join"
     KInnerJoin -> "inner_join"
-    KFullJoin -> "full_join"
-    KAntiJoin -> "anti_join"
-    KSemiJoin -> "semi_join"
-    KCrossJoin -> "cross_join"
     KDesc -> "desc"
     KAsc -> "asc"
     KOn -> "on"
     KAs -> "as"
     KWhere -> "where"
     KCols -> "cols"
+    KElementwise -> "elementwise"
+    KReducer -> "reducer"
+    KExtern -> "extern"
+    KInfix -> "infix"
+    KPrefix -> "prefix"
+    KLeft -> "left"
+    KRight -> "right"
+    KNon -> "non"
+    KForall -> "forall"
+    KVia -> "via"
 
 
 -- | Reverse lookup for the lexer.

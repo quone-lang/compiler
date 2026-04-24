@@ -2,7 +2,7 @@
 
 Consumes the token stream produced by 'Quone.Lex.Lexer' and produces a
 'CProgram'. The grammar implemented here is exactly the EBNF in
-LANGUAGE.md section 5.1, including:
+LANGUAGE2.md section 5.1, including:
 
 * operator precedence and associativity from section 5.2 (right-assoc
   exponent, tight unary minus, left-assoc everything else),
@@ -267,6 +267,23 @@ expectLowerIdent = P <| \s ->
             PErr (expectedDiag (stateFile s) "lowercase identifier" toks)
 
 
+-- | Match a lowercase identifier or a verb keyword (recovering the
+-- keyword's source spelling as the identifier). Used for foreign-
+-- import names so users can `import dplyr.inner_join : ...` without
+-- the `inner_join` token being treated as the verb keyword
+-- (KNOWN_FAILURES #5).
+expectLowerIdentOrVerbKw :: P CLowerName
+expectLowerIdentOrVerbKw = P <| \s ->
+    case dropLayout (stateTokens s) of
+        (Located {locValue = TLowerIdent t, locSpan = sp} : rest) ->
+            POk (CLowerName sp t) (s {stateTokens = rest})
+        (Located {locValue = TKeyword kw, locSpan = sp} : rest)
+            | isVerb kw ->
+                POk (CLowerName sp (keywordText kw)) (s {stateTokens = rest})
+        toks ->
+            PErr (expectedDiag (stateFile s) "lowercase identifier" toks)
+
+
 -- | Match an uppercase identifier (a type name or constructor).
 expectUpperIdent :: P CUpperName
 expectUpperIdent = P <| \s ->
@@ -334,8 +351,8 @@ pProgram = do
     skipLayout
     -- A doc block immediately preceding `module ...` documents the
     -- module itself. We accept it for ergonomics but don't yet wire
-    -- it to anywhere; per LANGUAGE.md section 14.6 module-level doc
-    -- is `[planned]`. Discarding for v0.0.1 keeps idiomatic R-package
+    -- it to anywhere; per LANGUAGE2.md section 14.6 module-level doc
+    -- is `[planned]`. Discarding for initial release keeps idiomatic R-package
     -- file headers (one-line summary above `module`) round-trippable.
     _ <- optional_ (try_ expectDocBlock)
     skipLayout
@@ -424,6 +441,21 @@ pDecl = do
                 `orElse` (CDType <$> pTypeDecl mDoc)
         TKeyword KImport ->
             CDImport <$> pImportDecl
+        TKeyword KExtern ->
+            CDExtern <$> pExternDecl mDoc
+        TKeyword KInfix ->
+            CDInfix <$> pInfixDecl mDoc
+        TKeyword KPrefix ->
+            CDPrefix <$> pPrefixDecl mDoc
+        TKeyword KElementwise -> do
+            -- M3.10: classification modifier on a Quone value
+            -- binding. The modifier overrides body inference for
+            -- the verb-rhs classification check.
+            _ <- expectKeyword KElementwise
+            CDValue <$> pValueDeclWithClass mDoc CCElementwise
+        TKeyword KReducer -> do
+            _ <- expectKeyword KReducer
+            CDValue <$> pValueDeclWithClass mDoc CCReducer
         TEof ->
             -- No more declarations: signal end. We use Err here so the
             -- caller's many_ stops.
@@ -439,8 +471,13 @@ declSpan = \case
     CDTypeAlias d -> aliasDeclSpan d
     CDImport d -> case d of
         CQuoneImport sp _ _ -> sp
-        CForeignImport sp _ _ -> sp
+        CForeignImport sp _ _ _ -> sp
     CDValue d -> valueDeclSpan d
+    CDExtern d -> case d of
+        CExternValue sp _ _ _ _ _ -> sp
+        CExternType sp _ _ _ -> sp
+    CDInfix d -> infixDeclSpan d
+    CDPrefix d -> prefixDeclSpan d
 
 
 pTypeDecl :: Maybe CDocBlock -> P CTypeDecl
@@ -504,9 +541,26 @@ pTypeAlias mDoc = try_ <| do
 pImportDecl :: P CImportDecl
 pImportDecl = do
     s <- expectKeyword KImport
+    -- Optionally consume an 'elementwise' or 'reducer' modifier; only
+    -- valid when followed by a foreign import.
     nextSig <- peekSig
-    case locValue nextSig of
+    classification <- case locValue nextSig of
+        TKeyword KElementwise -> do
+            _ <- expectKeyword KElementwise
+            Prelude.pure CCElementwise
+        TKeyword KReducer -> do
+            _ <- expectKeyword KReducer
+            Prelude.pure CCReducer
+        _ ->
+            Prelude.pure CCOpaque
+    nextSig2 <- peekSig
+    case locValue nextSig2 of
         TUpperIdent _ -> do
+            -- A classification modifier on a Quone import is invalid:
+            -- modifiers describe the R-runtime behaviour of foreign
+            -- functions only.
+            when (classification /= CCOpaque) <|
+                P (\st -> PErr (parseFail "'elementwise' / 'reducer' may only modify a foreign import" st))
             modulePath <- pDottedUpper
             -- Two shapes: dotted name ending in lower (single import),
             -- or DottedUpper followed by '(' selection ')'.
@@ -552,29 +606,57 @@ pImportDecl = do
                                     modPath
                                     (CImportSingle (CExportUpper lastUpper))
                                 )
-        TLowerIdent _ -> do
-            (fpath, fnName) <- pDottedLower
-            _ <- expectTok TColon
-            sig <- pTypeSig
-            Prelude.pure
-                ( CForeignImport
-                    (unionSpan s (typeSigSpan sig))
-                    ( CForeignName
-                        { foreignNameSpan = unionSpan (lowerNameSpan fnName) s
-                        , foreignNamePackage = fpath
-                        , foreignNameFn = fnName
-                        }
-                    )
-                    sig
-                )
+        TLowerIdent _ -> pForeignImportBody classification s
+        TKeyword kw | isVerb kw ->
+            -- Foreign-import name happens to overlap with a verb
+            -- keyword (e.g. `import dplyr.inner_join : ...`). Same
+            -- shape as the lowercase-ident case below; verbs only
+            -- bind in pipe positions, never at top level.
+            pForeignImportBody classification s
         _ ->
             P (\st -> PErr (parseFail "expected module path or foreign function name after 'import'" st))
 
 
+pForeignImportBody :: CForeignClassification -> SourceSpan -> P CImportDecl
+pForeignImportBody classification s = do
+    (fpath, fnName) <- pDottedLower
+    -- Optional `as <newname>` rename (M3.8): bind the alias in the
+    -- local scope; codegen still emits `pkg::originalName(...)`.
+    mAlias <- optional_ (try_ <| do
+        _ <- expectKeyword KAs
+        expectLowerIdentOrVerbKw)
+    _ <- expectTok TColon
+    sig <- pTypeSig
+    -- Optional `via "<template>"` clause (M3.9). The template is the
+    -- raw R call shape; @$1@, @$2@, ... substitute Quone-side args
+    -- in source order.
+    mVia <- optional_ (try_ <| do
+        _ <- expectKeyword KVia
+        (_, t) <- expectStringLit
+        Prelude.pure t)
+    Prelude.pure
+        ( CForeignImport
+            (unionSpan s (typeSigSpan sig))
+            classification
+            ( CForeignName
+                { foreignNameSpan = unionSpan (lowerNameSpan fnName) s
+                , foreignNamePackage = fpath
+                , foreignNameFn = fnName
+                , foreignNameAlias = mAlias
+                , foreignNameVia = mVia
+                }
+            )
+            sig
+        )
+
+
 pDottedLower :: P ([CLowerName], CLowerName)
 pDottedLower = do
-    first <- expectLowerIdent
-    rest <- many_ (try_ (expectTok TDot *> expectLowerIdent))
+    -- Foreign-import names accept verb keywords (e.g. `inner_join`)
+    -- as plain identifiers; the verb-name overlap is a initial release lexer
+    -- decision and we recover the original spelling here.
+    first <- expectLowerIdentOrVerbKw
+    rest <- many_ (try_ (expectTok TDot *> expectLowerIdentOrVerbKw))
     case rest of
         [] -> Prelude.pure ([], first)
         xs -> Prelude.pure (first : Prelude.init xs, Prelude.last xs)
@@ -592,8 +674,247 @@ pImportSelectionList =
         )
 
 
+
+-- ---------------------------------------------------------------------
+-- Prelude-only declarations: extern / infix / prefix
+-- ---------------------------------------------------------------------
+
+
+-- | Parse an @extern@ declaration. Two shapes:
+--
+-- *   @extern type Name [a b ...]@
+-- *   @extern [classification] name : Sig = "<r>"
+--      [{ dispatch_on = "<typevar>" }]@
+--
+-- The @classification@ token is one of @elementwise@ or @reducer@;
+-- omitting it defaults to opaque. The optional @dispatch_on@ clause is
+-- read by the code generator at lowering time (used by @map@ / @map2@
+-- to pick @purrr::map_*@).
+--
+-- The parser accepts @extern@ in any file. The validator
+-- ('Quone.Ast.Validate') rejects user code that uses it, so the
+-- error surfaces with proper diagnostics rather than as a parse
+-- failure.
+pExternDecl :: Maybe CDocBlock -> P CExternDecl
+pExternDecl mDoc = do
+    s <- expectKeyword KExtern
+    nextSig <- peekSig
+    case locValue nextSig of
+        TKeyword KType -> do
+            -- extern type Name [a b ...]
+            _ <- expectKeyword KType
+            name <- expectUpperIdent
+            params <- many_ expectLowerIdent
+            let
+                endSp = case params of
+                    [] -> upperNameSpan name
+                    _ -> lowerNameSpan (Prelude.last params)
+            Prelude.pure
+                ( CExternType
+                    { externTypeSpan = unionSpan s endSp
+                    , externTypeName = name
+                    , externTypeParams = params
+                    , externTypeDoc = mDoc
+                    }
+                )
+        _ -> do
+            classification <- pExternClassification
+            -- The extern's name may be a verb keyword (`count`,
+            -- `keep`, `discard`, ...). Reuse the import-name parser
+            -- that recovers the underlying identifier.
+            name <- expectLowerIdentOrVerbKw
+            _ <- expectTok TColon
+            sig <- pTypeSig
+            _ <- expectTok TAssign
+            body <- pExternBody
+            Prelude.pure
+                ( CExternValue
+                    { externValueSpan = unionSpan s (externBodySpan body)
+                    , externValueClassification = classification
+                    , externValueName = name
+                    , externValueSig = sig
+                    , externValueBody = body
+                    , externValueDoc = mDoc
+                    }
+                )
+
+
+pExternClassification :: P CExternClassification
+pExternClassification = do
+    nextSig <- peekSig
+    case locValue nextSig of
+        TKeyword KElementwise -> do
+            _ <- expectKeyword KElementwise
+            Prelude.pure CECElementwise
+        TKeyword KReducer -> do
+            _ <- expectKeyword KReducer
+            Prelude.pure CECReducer
+        _ -> Prelude.pure CECOpaque
+
+
+pExternBody :: P CExternBody
+pExternBody = do
+    (sp, s) <- expectStringLit
+    -- Optional `{ dispatch_on = "<var>" }` clause
+    mDispatch <- optional_ (try_ pDispatchClause)
+    case mDispatch of
+        Nothing -> Prelude.pure (CExternSimple sp s)
+        Just (endSp, var) ->
+            Prelude.pure (CExternDispatch (unionSpan sp endSp) s var)
+
+
+pDispatchClause :: P (SourceSpan, Text)
+pDispatchClause = do
+    _ <- expectTok TLBrace
+    name <- expectLowerIdent
+    when (lowerNameText name /= "dispatch_on")
+        (P (\st -> PErr (parseFail "expected 'dispatch_on'" st)))
+    _ <- expectTok TAssign
+    (_, var) <- expectStringLit
+    e <- expectTok TRBrace
+    Prelude.pure (e, var)
+
+
+externBodySpan :: CExternBody -> SourceSpan
+externBodySpan = \case
+    CExternSimple sp _ -> sp
+    CExternDispatch sp _ _ -> sp
+
+
+-- | Parse an @infix@ declaration:
+--
+-- @infix left|right|non <prec> (<op>) : <sig> = "<r>"@
+--
+-- @<op>@ is an operator token wrapped in parentheses, e.g. @(+)@,
+-- @(==)@. The wrapped token is mapped back to its 'CBinOp' value via
+-- 'tokToCBinOp'.
+pInfixDecl :: Maybe CDocBlock -> P CInfixDecl
+pInfixDecl mDoc = do
+    s <- expectKeyword KInfix
+    fixity <- pFixity
+    prec <- pPrecedence
+    _ <- expectTok TLParen
+    op <- pBinOpToken
+    _ <- expectTok TRParen
+    _ <- expectTok TColon
+    (constraints, sig) <- pConstrainedTypeSig
+    _ <- expectTok TAssign
+    (rspan, r) <- expectStringLit
+    Prelude.pure
+        ( CInfixDecl
+            { infixDeclSpan = unionSpan s rspan
+            , infixDeclFixity = fixity
+            , infixDeclPrec = prec
+            , infixDeclOp = op
+            , infixDeclSig = sig
+            , infixDeclConstraints = constraints
+            , infixDeclR = r
+            , infixDeclDoc = mDoc
+            }
+        )
+
+
+-- | Parse the precedence integer in an @infix@ or @prefix@
+-- declaration. Bare digit runs lex as 'TFloatLit' in Quone, so accept
+-- both 'TIntLit' and an integer-valued 'TFloatLit'.
+pPrecedence :: P Int
+pPrecedence = P <| \s ->
+    case dropLayout (stateTokens s) of
+        (Located {locValue = TIntLit n} : rest) ->
+            POk n (s {stateTokens = rest})
+        (Located {locValue = TFloatLit n} : rest) ->
+            POk (Prelude.floor n) (s {stateTokens = rest})
+        toks ->
+            PErr (expectedDiag (stateFile s) "precedence integer" toks)
+
+
+pFixity :: P CFixity
+pFixity = do
+    nextSig <- peekSig
+    case locValue nextSig of
+        TKeyword KLeft -> expectKeyword KLeft *> Prelude.pure CFLeft
+        TKeyword KRight -> expectKeyword KRight *> Prelude.pure CFRight
+        TKeyword KNon -> expectKeyword KNon *> Prelude.pure CFNon
+        _ -> P (\st -> PErr (parseFail "expected 'left', 'right', or 'non'" st))
+
+
+pBinOpToken :: P CBinOp
+pBinOpToken = P <| \s ->
+    case dropLayout (stateTokens s) of
+        (Located {locValue = t} : rest) ->
+            case tokToCBinOp t of
+                Just op -> POk op (s {stateTokens = rest})
+                Nothing ->
+                    PErr (parseFail "expected a binary operator token" s)
+        _ ->
+            PErr (parseFail "expected a binary operator token" s)
+
+
+tokToCBinOp :: Token -> Maybe CBinOp
+tokToCBinOp = \case
+    TPlus -> Just COpAdd
+    TMinus -> Just COpSub
+    TStar -> Just COpMul
+    TSlash -> Just COpDiv
+    TIntDiv -> Just COpIntDiv
+    TPercent -> Just COpMod
+    TCaret -> Just COpExp
+    TEq -> Just COpEq
+    TNeq -> Just COpNeq
+    TGt -> Just COpGt
+    TLt -> Just COpLt
+    TGe -> Just COpGe
+    TLe -> Just COpLe
+    _ -> Nothing
+
+
+-- | Parse a @prefix@ declaration:
+--
+-- @prefix <prec> (<op>) : <sig> = "<r>"@
+--
+-- initial release only supports unary @-@ as a prefix operator.
+pPrefixDecl :: Maybe CDocBlock -> P CPrefixDecl
+pPrefixDecl mDoc = do
+    s <- expectKeyword KPrefix
+    prec <- pPrecedence
+    _ <- expectTok TLParen
+    op <- pUnaryOpToken
+    _ <- expectTok TRParen
+    _ <- expectTok TColon
+    (constraints, sig) <- pConstrainedTypeSig
+    _ <- expectTok TAssign
+    (rspan, r) <- expectStringLit
+    Prelude.pure
+        ( CPrefixDecl
+            { prefixDeclSpan = unionSpan s rspan
+            , prefixDeclPrec = prec
+            , prefixDeclOp = op
+            , prefixDeclSig = sig
+            , prefixDeclConstraints = constraints
+            , prefixDeclR = r
+            , prefixDeclDoc = mDoc
+            }
+        )
+
+
+pUnaryOpToken :: P CUnaryOp
+pUnaryOpToken = P <| \s ->
+    case dropLayout (stateTokens s) of
+        (Located {locValue = TMinus} : rest) ->
+            POk COpNeg (s {stateTokens = rest})
+        _ ->
+            PErr (parseFail "expected a unary operator token (only '-' is supported)" s)
+
+
 pValueDecl :: Maybe CDocBlock -> P CValueDecl
-pValueDecl mDoc = do
+pValueDecl mDoc = pValueDeclWithClass mDoc CCOpaque
+
+
+-- | Like 'pValueDecl' but with a caller-supplied classification.
+-- Used by 'pDecl' when the value binding is preceded by a
+-- classification modifier (M3.10).
+pValueDeclWithClass :: Maybe CDocBlock -> CForeignClassification -> P CValueDecl
+pValueDeclWithClass mDoc classification = do
     -- Optional type annotation: `name : TypeSig` on its own line,
     -- followed by `name params <- body` on the next.
     skipLayout
@@ -618,6 +939,7 @@ pValueDecl mDoc = do
                     , valueDeclParams = params
                     , valueDeclBody = body
                     , valueDeclDoc = mDoc
+                    , valueDeclClassification = classification
                     }
                 )
         _ ->
@@ -660,6 +982,47 @@ pTypeSig = do
             right <- pTypeSig
             Prelude.pure (CTFun (unionSpan (typeAppSpan left) (typeSigSpan right)) left right)
         Nothing -> Prelude.pure left
+
+
+-- | Parse the binder list inside `forall` (M3.5 / M3.11). Each
+-- binder is either a bare lowercase identifier (no constraint)
+-- or `name: ConstraintName`. The list is comma-separated and
+-- terminated by `.`.
+--
+-- Returns the list of (binder name, optional constraint name).
+-- The caller that wants to honour constraints uses
+-- 'pConstrainedTypeSig' instead of 'pTypeSig'.
+pForallBinders :: P [(CLowerName, Maybe CUpperName)]
+pForallBinders = do
+    _ <- expectKeyword KForall
+    binders <- sepBy1 pBinder (expectTok TComma)
+    _ <- expectTok TDot
+    Prelude.pure binders
+  where
+    pBinder = do
+        nm <- expectLowerIdent
+        mConstraint <- optional_ (try_ <| do
+            _ <- expectTok TColon
+            expectUpperIdent)
+        Prelude.pure (nm, mConstraint)
+
+
+-- | Variant of 'pTypeSig' that returns both the parsed signature
+-- and the constraint binders from any `forall` prefix (M3.11).
+-- Used by infix/prefix declarations and value annotations that want
+-- to thread constraints through to the typer.
+pConstrainedTypeSig :: P ([(CLowerName, Maybe CUpperName)], CTypeSig)
+pConstrainedTypeSig = do
+    left <- pTypeApp
+    mArrow <- optional_ (try_ (expectTok TArrow))
+    body <- case mArrow of
+        Just _ -> do
+            right <- pTypeSig
+            Prelude.pure (CTFun (unionSpan (typeAppSpan left) (typeSigSpan right)) left right)
+        Nothing -> Prelude.pure left
+    Prelude.pure ([], body)
+
+
 
 
 pTypeApp :: P CTypeSig
@@ -740,7 +1103,7 @@ pExpr :: P CExpr
 pExpr = pPipe
 
 
--- Precedence ladder per LANGUAGE.md section 5.2 (low to high binding):
+-- Precedence ladder per LANGUAGE2.md section 5.2 (low to high binding):
 -- 1 pipe |>
 -- 2 comparison
 -- 3 additive + -
@@ -754,7 +1117,7 @@ pExpr = pPipe
 pPipe :: P CExpr
 pPipe = do
     left <- pCmp
-    -- Multi-line pipelines are common (LANGUAGE.md section 9.1's
+    -- Multi-line pipelines are common (LANGUAGE2.md section 9.1's
     -- examples), so we DO allow `|>` continuations across lines.
     -- Per-iteration we still bail when the next significant token is
     -- not `|>`, which keeps the next top-level decl from being eaten.
@@ -932,10 +1295,8 @@ pPrimary = do
 isVerb :: Keyword -> Prelude.Bool
 isVerb k = k `Prelude.elem`
     [ KSelect, KFilter, KMutate, KSummarize, KGroupBy, KUngroup
-    , KArrange, KRename, KDistinct, KDistinctAll, KCount, KSlice
-    , KPull, KRelocate, KTransmute, KMutateEach, KSummarizeEach
-    , KLeftJoin, KRightJoin, KInnerJoin, KFullJoin, KAntiJoin
-    , KSemiJoin, KCrossJoin
+    , KArrange, KRename
+    , KLeftJoin, KRightJoin, KInnerJoin
     ]
 
 
@@ -977,12 +1338,17 @@ pCaseArm :: P CCaseArm
 pCaseArm = do
     skipLayout
     pat <- pPattern
+    -- Optional pattern guard: `pat | expr -> body` (M3.3).
+    mGuard <- optional_ (try_ (do
+        _ <- expectTok TPipeBar
+        pExpr))
     _ <- expectTok TArrow
     body <- pExpr
     Prelude.pure
         ( CCaseArm
             { caseArmSpan = unionSpan (patternSpan pat) (exprSpan body)
             , caseArmPattern = pat
+            , caseArmGuard = mGuard
             , caseArmBody = body
             }
         )
@@ -1092,15 +1458,44 @@ pParenthesizedModifier = do
 pVerb :: Keyword -> P CExpr
 pVerb kw = do
     s <- expectKeyword kw
-    args <- many_ (try_ <| do
-        crossed <- crossedLine
-        when crossed (P (\st -> PErr (parseFail "" st)))
-        pDplyrArg)
+    if kw `Prelude.elem` [KLeftJoin, KRightJoin, KInnerJoin] then
+        pJoinVerb s kw
+    else do
+        args <- many_ (try_ <| do
+            crossed <- crossedLine
+            when crossed (P (\st -> PErr (parseFail "" st)))
+            pDplyrArg)
+        let
+            sp = case args of
+                [] -> s
+                xs -> unionSpan s (dplyrArgSpan (Prelude.last xs))
+        Prelude.pure (CEVerb sp kw args)
+
+
+pJoinVerb :: SourceSpan -> Keyword -> P CExpr
+pJoinVerb s kw = do
+    target <- pAccess
+    _ <- expectTok TLBrace
+    pairs <- sepBy1 pJoinPair (expectTok TComma)
+    e <- expectTok TRBrace
     let
-        sp = case args of
-            [] -> s
-            xs -> unionSpan s (dplyrArgSpan (Prelude.last xs))
-    Prelude.pure (CEVerb sp kw args)
+        sp = unionSpan s e
+    Prelude.pure (CEVerb sp kw [CDAJoinOn sp target pairs])
+
+
+pJoinPair :: P CJoinPair
+pJoinPair = do
+    left <- expectLowerIdent
+    mEq <- optional_ (try_ (expectTok TAssign))
+    right <- case mEq of
+        Nothing -> Prelude.pure left
+        Just _ -> expectLowerIdent
+    Prelude.pure
+        ( CJoinPair
+            (unionSpan (lowerNameSpan left) (lowerNameSpan right))
+            left
+            right
+        )
 
 
 pDplyrArg :: P CDplyrArg
@@ -1182,7 +1577,9 @@ pPattern = do
         TUnderscore -> do
             sp <- expectTok TUnderscore
             Prelude.pure (CPWildcard sp)
-        TLowerIdent _ -> CPVar <$> expectLowerIdent
+        TLowerIdent _ -> do
+            n <- expectLowerIdent
+            Prelude.pure (CPVar n)
         TIntLit n -> do
             (sp, _) <- expectIntLit
             Prelude.pure (CPLit sp (CLInt n))
@@ -1298,6 +1695,8 @@ patternSpan = \case
     CPCon sp _ _ -> sp
     CPRecord sp _ -> sp
     CPParen sp _ -> sp
+    CPVector sp _ -> sp
+    CPAs sp _ _ -> sp
 
 
 dplyrArgSpan :: CDplyrArg -> SourceSpan

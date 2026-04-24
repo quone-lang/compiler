@@ -17,7 +17,8 @@ import Quone.Ast.Source (Program)
 import Quone.Ast.Validate (validate)
 import Quone.Diagnostic (Diagnostic)
 import Quone.Parse.Desugar (desugarFile)
-import Quone.Type.Infer (TypedProgram, inferProgram)
+import Quone.Prelude.Load (LoadedPrelude (..), loadPrelude)
+import Quone.Type.Infer (TypedProgram, inferProgramFrom)
 import qualified Prelude
 
 
@@ -30,11 +31,14 @@ data CompileResult
 
 compileText :: Text -> Text -> CompileResult
 compileText filename src =
-    case desugarFile filename src of
+    case loadPrelude of
         Prelude.Left d -> CompileFailed [d]
-        Prelude.Right prog ->
-            case validate prog of
-                ds@(_ : _) -> CompileFailed ds
-                [] -> case inferProgram prog of
-                    Prelude.Left d -> CompileFailed [d]
-                    Prelude.Right typed -> CompileOk prog typed
+        Prelude.Right loaded ->
+            case desugarFile filename src of
+                Prelude.Left d -> CompileFailed [d]
+                Prelude.Right prog ->
+                    case validate prog of
+                        ds@(_ : _) -> CompileFailed ds
+                        [] -> case inferProgramFrom (preludeEnv loaded) prog of
+                            Prelude.Left d -> CompileFailed [d]
+                            Prelude.Right (typed, _) -> CompileOk prog typed

@@ -8,7 +8,7 @@ Every CST node has exactly one canonical rendering. The strategy is:
 * Insert a blank line between top-level declarations (two when the
   next decl carries a doc block).
 
-For v0.0.1 the formatter rewrites to canonical form without
+For initial release the formatter rewrites to canonical form without
 preserving the user's original whitespace; comment placement beyond
 'CDocBlock' lands when the lexer grows trivia tracking
 ('Quone.Format.Trivia').
@@ -56,7 +56,7 @@ formatCst _src = formatCstWithComments []
 -- | Pretty-print a program, slotting @#@ comments back in between
 -- the declarations they originally preceded.
 --
--- v0.0.1 strategy:
+-- initial release strategy:
 --
 -- * Comments whose start line is before the first declaration's
 --   start line are emitted at the very top of the output (after the
@@ -168,9 +168,13 @@ declSpanCst :: CDecl -> SourceSpan
 declSpanCst = \case
     CDValue v -> valueDeclSpan v
     CDImport (CQuoneImport sp _ _) -> sp
-    CDImport (CForeignImport sp _ _) -> sp
+    CDImport (CForeignImport sp _ _ _) -> sp
     CDType td -> typeDeclSpan td
     CDTypeAlias a -> aliasDeclSpan a
+    CDExtern (CExternValue sp _ _ _ _ _) -> sp
+    CDExtern (CExternType sp _ _ _) -> sp
+    CDInfix d -> infixDeclSpan d
+    CDPrefix d -> prefixDeclSpan d
 
 
 stableSortByLine :: [Comment] -> [Comment]
@@ -248,6 +252,9 @@ formatDecl = \case
     CDImport i -> formatImport i
     CDType td -> formatType td
     CDTypeAlias a -> formatAlias a
+    CDExtern e -> formatExtern e
+    CDInfix d -> formatInfixDecl d
+    CDPrefix d -> formatPrefixDecl d
 
 
 formatImport :: CImportDecl -> Doc
@@ -259,7 +266,7 @@ formatImport = \case
         text "import"
             <+> text name
             <> formatSelection sel
-    CForeignImport _ fname sig ->
+    CForeignImport _ classification fname sig ->
         let
             pkg =
                 T.intercalate
@@ -269,8 +276,12 @@ formatImport = \case
                 if T.null pkg
                     then lowerText (foreignNameFn fname)
                     else pkg ++ "." ++ lowerText (foreignNameFn fname)
+            head_ = case classification of
+                CCOpaque -> text "import"
+                CCElementwise -> text "import" <+> text "elementwise"
+                CCReducer -> text "import" <+> text "reducer"
         in
-        text "import"
+        head_
             <+> text qualified
             <+> text ":"
             <+> formatTypeSig sig
@@ -301,11 +312,13 @@ formatType td =
         <> line
         <> Doc.indent 4 (joinVariants variants)
   where
+    -- Quone uses `<-` (not Haskell's `=`) for type-decl bodies and
+    -- aliases, matching the value-binding spelling.
     joinVariants = \case
         [] -> empty
-        [v] -> text "= " <> v
+        [v] -> text "<- " <> v
         (v : rest) ->
-            text "= " <> v
+            text "<- " <> v
                 <> concatD
                     (Prelude.fmap (\x -> line <> text "| " <> x) rest)
 
@@ -327,7 +340,7 @@ formatAlias a =
         <> text "type alias"
         <+> text (upperText (aliasDeclName a))
         <> formatParams (Prelude.fmap lowerText (aliasDeclParams a))
-        <+> text "="
+        <+> text "<-"
         <+> formatTypeSig (aliasDeclBody a)
 
 
@@ -353,11 +366,106 @@ formatValue v =
                     (Prelude.fmap lowerText (valueDeclParams v))
                 <+> text "<-"
         body = formatExpr (valueDeclBody v)
+        -- Bodies whose internal layout is multi-line by design
+        -- (case, let, if) must NOT be flattened into a single line
+        -- by the surrounding `group`. Anything else may flatten.
+        renderedBody = case valueDeclBody v of
+            CELet _ _ _ -> head_ <+> body
+            CECase _ _ _ -> head_ <+> body
+            CEIf _ _ _ _ -> head_ <+> body
+            _ -> group (head_ <+> body)
     in
     formatDoc (valueDeclDoc v)
         <> annotation
-        <> group (head_ <+> body)
+        <> renderedBody
 
+
+-- | Format a prelude-only @extern@ declaration. The value-binding
+-- shape carries an optional classification modifier, a signature, and
+-- an R-callable string body (with optional @{ dispatch_on = "var" }@).
+formatExtern :: CExternDecl -> Doc
+formatExtern = \case
+    CExternValue _ classification name sig body mDoc ->
+        let
+            classText = case classification of
+                CECOpaque -> empty
+                CECElementwise -> space <> text "elementwise"
+                CECReducer -> space <> text "reducer"
+            head_ =
+                text "extern"
+                    <> classText
+                    <+> text (lowerText name)
+                    <+> text ":"
+                    <+> formatTypeSig sig
+                    <+> text "="
+                    <+> formatExternBody body
+        in
+        formatDoc mDoc <> head_
+    CExternType _ name params mDoc ->
+        let
+            head_ =
+                text "extern type"
+                    <+> text (upperText name)
+                    <> formatParams (Prelude.fmap lowerText params)
+        in
+        formatDoc mDoc <> head_
+
+
+formatExternBody :: CExternBody -> Doc
+formatExternBody = \case
+    CExternSimple _ s -> dquote <> text s <> dquote
+    CExternDispatch _ s var ->
+        dquote
+            <> text s
+            <> dquote
+            <+> text "{ dispatch_on ="
+            <+> dquote
+            <> text var
+            <> dquote
+            <+> text "}"
+  where
+    dquote = text "\""
+
+
+-- | Format a prelude-only @infix@ overload declaration.
+formatInfixDecl :: CInfixDecl -> Doc
+formatInfixDecl d =
+    let
+        assocText = case infixDeclFixity d of
+            CFLeft -> text "left"
+            CFRight -> text "right"
+            CFNon -> text "non"
+        opText = text "(" <> text (binOpText (infixDeclOp d)) <> text ")"
+    in
+    formatDoc (infixDeclDoc d)
+        <> text "infix"
+        <+> assocText
+        <+> text (T.pack (Prelude.show (infixDeclPrec d)))
+        <+> opText
+        <+> text ":"
+        <+> formatTypeSig (infixDeclSig d)
+        <+> text "="
+        <+> text "\""
+        <> text (infixDeclR d)
+        <> text "\""
+
+
+-- | Format a prelude-only @prefix@ overload declaration (unary @-@).
+formatPrefixDecl :: CPrefixDecl -> Doc
+formatPrefixDecl d =
+    let
+        opText = text "(" <> text (unaryOpText (prefixDeclOp d)) <> text ")"
+    in
+    formatDoc (prefixDeclDoc d)
+        <> text "prefix"
+        <+> text (T.pack (Prelude.show (prefixDeclPrec d)))
+        <+> opText
+        <+> text ":"
+        <+> formatTypeSig (prefixDeclSig d)
+        <+> text "="
+        <+> text "\""
+        <> text (prefixDeclR d)
+        <> text "\""
 
 
 -- ---------------------------------------------------------------------
@@ -512,9 +620,20 @@ binOpText = \case
     COpLe -> "<="
 
 
+unaryOpText :: CUnaryOp -> Text
+unaryOpText = \case
+    COpNeg -> "-"
+
+
 formatArm :: CCaseArm -> Doc
 formatArm a =
-    formatPattern (caseArmPattern a)
+    let
+        head_ = formatPattern (caseArmPattern a)
+        guarded = case caseArmGuard a of
+            Nothing -> head_
+            Just g -> head_ <+> text "|" <+> formatExpr g
+    in
+    guarded
         <+> text "->"
         <+> formatExpr (caseArmBody a)
 
@@ -604,7 +723,11 @@ formatPattern = \case
         text "{ "
             <> hsepCommas (Prelude.fmap formatRecordPatField fs)
             <> text " }"
+    CPVector _ ps ->
+        text "[" <> hsepCommas (Prelude.fmap formatPattern ps) <> text "]"
     CPParen _ inner -> text "(" <> formatPattern inner <> text ")"
+    CPAs _ n inner ->
+        text (lowerText n) <> text "@" <> formatPattern inner
 
 
 formatRecordPatField :: CRecordPatField -> Doc

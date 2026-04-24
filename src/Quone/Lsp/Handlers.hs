@@ -134,26 +134,45 @@ severityCode = \case
 
 handleDidOpen :: Json.Value -> State.State -> (State.State, Maybe (Text, [Diagnostic]))
 handleDidOpen params state = case extractDocument params of
-    Just (uri, text, ver) ->
-        let
-            doc = State.Document {State.docText = text, State.docVersion = ver}
-            state' = State.putDocument uri doc state
-            diags = collectDiagnostics uri text
-        in
-        (state', Just (uri, diags))
+    Just (uri, text, ver) -> updateDocAndDiags uri text ver state
     Prelude.Nothing -> (state, Prelude.Nothing)
 
 
 handleDidChange :: Json.Value -> State.State -> (State.State, Maybe (Text, [Diagnostic]))
 handleDidChange params state = case extractChanged params of
-    Just (uri, text, ver) ->
-        let
-            doc = State.Document {State.docText = text, State.docVersion = ver}
-            state' = State.putDocument uri doc state
-            diags = collectDiagnostics uri text
-        in
-        (state', Just (uri, diags))
+    Just (uri, text, ver) -> updateDocAndDiags uri text ver state
     Prelude.Nothing -> (state, Prelude.Nothing)
+
+
+-- | Common did-open / did-change body. Stores the new document text,
+-- runs the compile, publishes diagnostics, and (M4.4) caches the
+-- last-successful compile in @stateLastGood@ so hover / definition
+-- handlers can fall back to known-good info while the user edits.
+updateDocAndDiags
+    :: Text
+    -> Text
+    -> Int
+    -> State.State
+    -> (State.State, Maybe (Text, [Diagnostic]))
+updateDocAndDiags uri text ver state =
+    let
+        doc = State.Document {State.docText = text, State.docVersion = ver}
+        state' = State.putDocument uri doc state
+        result = Compile.compileText (uriToPath uri) text
+        (state'', diags) = case result of
+            Compile.CompileOk prog typed ->
+                let
+                    lg =
+                        State.LastGood
+                            { State.lastGoodVersion = ver
+                            , State.lastGoodProgram = prog
+                            , State.lastGoodTyped = typed
+                            }
+                in
+                (State.putLastGood uri lg state', [])
+            Compile.CompileFailed ds -> (state', ds)
+    in
+    (state'', Just (uri, diags))
 
 
 extractDocument :: Json.Value -> Maybe (Text, Text, Int)
@@ -330,7 +349,19 @@ lookupContext params state = do
     case Compile.compileText (uriToPath uri) (State.docText doc) of
         Compile.CompileOk prog typed ->
             Just (uri, doc, prog, typed)
-        Compile.CompileFailed _ -> Prelude.Nothing
+        Compile.CompileFailed _ ->
+            -- Fall back to the last successful compile (M4.4) so
+            -- hover / definition keep returning useful answers
+            -- while the user is mid-edit.
+            case State.getLastGood uri state of
+                Just lg ->
+                    Just
+                        ( uri
+                        , doc
+                        , State.lastGoodProgram lg
+                        , State.lastGoodTyped lg
+                        )
+                Prelude.Nothing -> Prelude.Nothing
 
 
 -- | Pull the @position@ field from a request payload.
@@ -354,7 +385,18 @@ handleDocumentSymbol params state = case Json.lookupField "textDocument" params 
                         Json.VArray
                             (Prelude.fmap valueDeclSymbol
                                 (programValueDecls prog))
-                    Compile.CompileFailed _ -> Json.VArray []
+                    Compile.CompileFailed _ ->
+                        -- Graceful fallback (M4.4): if the current
+                        -- compile fails, surface the symbols from
+                        -- the last successful compile so the
+                        -- outline view keeps working.
+                        case State.getLastGood uri state of
+                            Just lg ->
+                                Json.VArray
+                                    (Prelude.fmap valueDeclSymbol
+                                        (programValueDecls
+                                            (State.lastGoodProgram lg)))
+                            Prelude.Nothing -> Json.VArray []
             Prelude.Nothing -> Json.VArray []
         Prelude.Nothing -> Json.VArray []
     Prelude.Nothing -> Json.VArray []

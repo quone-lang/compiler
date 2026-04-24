@@ -1,6 +1,6 @@
 {-| Structured compiler diagnostics.
 
-LANGUAGE.md section 12.1 enumerates ten error categories that a
+LANGUAGE2.md section 12.1 enumerates ten error categories that a
 conforming implementation MUST recognise. This module pins each
 category to a constructor of 'Category' so every compiler phase can
 emit diagnostics in a uniform shape and the test suite can assert on
@@ -26,7 +26,7 @@ import Quone.Position
 import qualified Prelude
 
 
--- | The ten error categories from LANGUAGE.md section 12.1, plus a
+-- | The ten error categories from LANGUAGE2.md section 12.1, plus a
 -- generic 'Internal' for compiler bugs.
 data Category
     = Lexical
@@ -40,10 +40,13 @@ data Category
     | Decode
     | NonExhaustivePattern
     | Internal
+    | -- Lint findings (M5.4). Advisory; severity is 'Warning'.
+      UnusedImport
+    | MissingExportAnnotation
     deriving (Prelude.Show, Prelude.Eq, Prelude.Ord)
 
 
--- | Diagnostic severity. v0.0.1 only emits 'Error' and 'Warning'; the
+-- | Diagnostic severity. initial release only emits 'Error' and 'Warning'; the
 -- third level is reserved for future LSP / stylistic notices.
 data Severity
     = Error
@@ -90,6 +93,8 @@ categoryName = \case
     Decode -> "decode"
     NonExhaustivePattern -> "non-exhaustive-pattern"
     Internal -> "internal"
+    UnusedImport -> "unused-import"
+    MissingExportAnnotation -> "missing-export-annotation"
 
 
 -- | Render a diagnostic to a single multi-line text block in the form:

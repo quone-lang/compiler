@@ -1,6 +1,6 @@
 {-| R code generation.
 
-Implements LANGUAGE.md section 13: maps each AST node to its R
+Implements LANGUAGE2.md section 13: maps each AST node to its R
 counterpart. Highlights:
 
 * primitive mapping per section 13.2 ('Integer' -> @1L@,
@@ -39,6 +39,7 @@ import qualified Data.Text as T
 import NriPrelude
 import Quone.Ast.Source
 import Quone.Generate.Pretty
+import qualified Quone.Prelude.Load as Prelude.Load
 import qualified Prelude
 
 
@@ -48,21 +49,47 @@ import qualified Prelude
 -- ---------------------------------------------------------------------
 
 
--- | Codegen-time context. For v0.0.1 it carries:
+-- | Codegen-time context. For initial release it carries:
 --
 --   * @gePkgQualifiers@: a foreign-import map from local name to its
---     fully-qualified R form @pkg::fn@ (LANGUAGE.md section 13.9).
+--     fully-qualified R form @pkg::fn@ (LANGUAGE2.md section 13.9);
+--   * @geExternBodies@: per-name R-callable string supplied by an
+--     @extern@ declaration in the embedded prelude
+--     (LANGUAGE2.md section 10). Looked up by 'EApp' lowering to
+--     replace the Quone name with the declared R form;
+--   * @geOperatorR@: per-'BinOp' R operator string supplied by the
+--     prelude's @infix@ declarations. All overloads of a given
+--     operator share the same R string.
+--   * @geUnaryR@: same for unary operators.
 data GenEnv = GenEnv
     { gePkgQualifiers :: Map.Map Text Text
+    , geExternBodies :: Map.Map Text ExternBody
+    , geOperatorR :: Map.Map BinOp Text
+    , geUnaryR :: Map.Map UnaryOp Text
+    , geForeignVia :: Map.Map Text Text
+    -- ^ Local-name -> R-call template (M3.9). When a call site
+    -- resolves to a foreign import that has a `via "..."` clause,
+    -- the generator substitutes @$1@, @$2@, ... in this template
+    -- instead of emitting a straight `pkg::fn(args...)`.
     }
     deriving (Prelude.Show, Prelude.Eq)
 
 
 emptyGenEnv :: GenEnv
-emptyGenEnv = GenEnv {gePkgQualifiers = Map.empty}
+emptyGenEnv =
+    GenEnv
+        { gePkgQualifiers = Map.empty
+        , geExternBodies = Map.empty
+        , geOperatorR = Map.empty
+        , geUnaryR = Map.empty
+        , geForeignVia = Map.empty
+        }
 
 
 -- | Walk every foreign-import declaration and build the qualifier map.
+-- Also seed the extern-body map from the embedded prelude
+-- (LANGUAGE2.md section 10) so calls to @sqrt@, @mean@, @if_else@,
+-- etc. lower to the R callable strings declared in @Prelude.Q@.
 --
 -- @import readr.read_csv : ...@ ⇒ @\"read_csv\" -> \"readr::read_csv\"@.
 -- Multi-segment package paths are joined with dots, then dots are
@@ -72,12 +99,88 @@ buildGenEnv prog =
     GenEnv
         { gePkgQualifiers =
             Map.fromList
-                [ ( lowerText (foreignFn fname)
+                [ ( lowerText (foreignBindName fname)
                   , qualifierText fname
                   )
-                | DImport (ForeignImport _ fname _) <- programDecls prog
+                | DImport (ForeignImport _ _ fname _) <- programDecls prog
+                ]
+        , geExternBodies =
+            -- Prelude bodies first; user extern bodies (which the
+            -- validator rejects, but we honour them defensively for
+            -- prelude self-compilation) override.
+            Map.union
+                (collectExternBodies prog)
+                preludeExternBodies
+        , geOperatorR =
+            Map.union
+                (collectOperatorR prog)
+                preludeOperatorR
+        , geUnaryR =
+            Map.union
+                (collectUnaryR prog)
+                preludeUnaryR
+        , geForeignVia =
+            Map.fromList
+                [ (lowerText (foreignBindName fname), template)
+                | DImport (ForeignImport _ _ fname _) <- programDecls prog
+                , Just template <- [foreignVia fname]
                 ]
         }
+
+
+-- | Extract the @extern@ value declarations from a program into a
+-- name-to-body map. Used both for the user program (which normally
+-- has none after validation) and for the embedded prelude.
+collectExternBodies :: Program -> Map.Map Text ExternBody
+collectExternBodies prog =
+    Map.fromList
+        [ (lowerText name, body)
+        | DExtern (ExternValue _ _ name _ body _) <- programDecls prog
+        ]
+
+
+-- | Extract operator R strings from @infix@ declarations. All
+-- overloads of a given operator share the same R string in initial release;
+-- if multiple overloads disagree, the LAST one wins (insertion order).
+collectOperatorR :: Program -> Map.Map BinOp Text
+collectOperatorR prog =
+    Map.fromList
+        [ (infixDeclOp d, infixDeclR d)
+        | DInfix d <- programDecls prog
+        ]
+
+
+collectUnaryR :: Program -> Map.Map UnaryOp Text
+collectUnaryR prog =
+    Map.fromList
+        [ (prefixDeclOp d, prefixDeclR d)
+        | DPrefix d <- programDecls prog
+        ]
+
+
+-- | Extern bodies declared in @Prelude.Q@. Loaded once; cached as a
+-- CAF. A failure to load is silently squashed (the typer surfaces the
+-- diagnostic; we just lose lowering knowledge here, which is fine
+-- because user code wouldn't typecheck either).
+preludeExternBodies :: Map.Map Text ExternBody
+preludeExternBodies =
+    case Prelude.Load.loadPrelude of
+        Prelude.Right loaded -> collectExternBodies (Prelude.Load.preludeProgram loaded)
+        Prelude.Left _ -> Map.empty
+
+
+preludeOperatorR :: Map.Map BinOp Text
+preludeOperatorR =
+    case Prelude.Load.loadPrelude of
+        Prelude.Right loaded -> collectOperatorR (Prelude.Load.preludeProgram loaded)
+        Prelude.Left _ -> Map.empty
+
+
+preludeUnaryR :: Map.Map UnaryOp Text
+preludeUnaryR =
+    case Prelude.Load.loadPrelude of
+        Prelude.Right loaded -> collectUnaryR (Prelude.Load.preludeProgram loaded)
+        Prelude.Left _ -> Map.empty
 
 
 -- | Produce the @pkg::fn@ form. R packages have a single namespace
@@ -114,13 +217,96 @@ generateProgram = generateScript
 
 
 -- | Synonym used by the CLI's @build --script@ path.
+--
+-- Prepends the prelude's Quone-side value bindings (e.g.
+-- @with_default@, @result_map@) so user code can call them at
+-- runtime. Foreign-style (`extern`) prelude entries don't need
+-- emitting — they lower to direct R-call expressions at the call
+-- site.
 generateScript :: Program -> Text
 generateScript prog =
     let
         env = buildGenEnv prog
-        decls = generateDecls env (programDecls prog)
+        userRefs = collectExprRefs (programDecls prog)
+        usedPrelude = preludeValueDeclsUsedBy userRefs
+        decls =
+            generateDecls env (usedPrelude Prelude.++ programDecls prog)
     in
     render decls
+
+
+-- | Walk a list of declarations and collect every name referenced
+-- in any expression position. Used to prune the embedded prelude
+-- to just the value bindings the user actually calls.
+collectExprRefs :: [Decl] -> Set.Set Text
+collectExprRefs decls =
+    Set.unions
+        [ exprRefs (valueDeclBody v)
+        | DValue v <- decls
+        ]
+
+
+exprRefs :: Expr -> Set.Set Text
+exprRefs = \case
+    EVar n -> Set.singleton (lowerText n)
+    ELit _ _ -> Set.empty
+    ECon _ -> Set.empty
+    ELambda _ _ body -> exprRefs body
+    ECase _ s arms ->
+        Set.unions (exprRefs s : Prelude.fmap (exprRefs Prelude.. caseArmBody) arms)
+    ELet _ binds body ->
+        Set.unions (exprRefs body : Prelude.fmap (exprRefs Prelude.. bindingBody) binds)
+    EApp _ f x -> Set.union (exprRefs f) (exprRefs x)
+    EBinOp _ _ l r -> Set.union (exprRefs l) (exprRefs r)
+    EUnary _ _ e -> exprRefs e
+    EPipe _ l r -> Set.union (exprRefs l) (exprRefs r)
+    EField _ e _ -> exprRefs e
+    ERecord _ fs ->
+        Set.unions (Prelude.fmap (exprRefs Prelude.. fieldBindingValue) fs)
+    ERecordUpdate _ tgt fs ->
+        Set.unions (exprRefs tgt : Prelude.fmap (exprRefs Prelude.. fieldBindingValue) fs)
+    EVector _ items -> Set.unions (Prelude.fmap exprRefs items)
+    EDataframe _ binds ->
+        Set.unions (Prelude.fmap (exprRefs Prelude.. fieldBindingValue) binds)
+    EVerb _ _ args ->
+        Set.unions (Prelude.fmap dplyrArgRefs args)
+  where
+    dplyrArgRefs = \case
+        DAExpr e -> exprRefs e
+        DARecord _ fs ->
+            Set.unions (Prelude.fmap (exprRefs Prelude.. fieldBindingValue) fs)
+        DAModifier _ -> Set.empty
+        DAJoinOn _ e _pairs ->
+            -- JoinPair only references column names, not arbitrary
+            -- expressions, so there's nothing to walk for value
+            -- references.
+            exprRefs e
+
+
+-- | Subset the prelude's user-style value bindings (i.e. those
+-- defined as ordinary `name <- expr` rather than `extern`) to the
+-- ones the user's program actually references. Idempotent: if the
+-- user already shadows a prelude name, the prelude version is
+-- still emitted (the user's later binding overrides at runtime;
+-- name resolution prevents accidental self-reference).
+preludeValueDeclsUsedBy :: Set.Set Text -> [Decl]
+preludeValueDeclsUsedBy used =
+    [ DValue v
+    | DValue v <- preludeValueDecls
+    , Set.member (lowerText (valueDeclName v)) used
+    ]
+
+
+-- | The prelude's user-style value bindings. Loaded once and cached
+-- as a CAF.
+preludeValueDecls :: [Decl]
+preludeValueDecls =
+    case Prelude.Load.loadPrelude of
+        Prelude.Right loaded ->
+            [ DValue v
+            | DValue v <- programDecls (Prelude.Load.preludeProgram loaded)
+            ]
+        Prelude.Left _ -> []
 
 
 -- | Convenience for tests.
@@ -144,9 +330,15 @@ generateDecls env = List.foldl' step empty
 decl :: GenEnv -> Decl -> Doc
 decl env = \case
     DValue v -> valueDecl env v
-    DType _ -> empty           -- Custom types have no runtime presence in v0.0.1
+    DType _ -> empty           -- Custom types have no runtime presence in initial release
     DTypeAlias _ -> empty
     DImport _ -> empty         -- Foreign-import calls qualify themselves at the call site
+    DExtern _ -> empty
+        -- Prelude-only declarations have no runtime presence: their
+        -- value is supplied by the embedded R callable string at the
+        -- call site, not by emitting a binding.
+    DInfix _ -> empty
+    DPrefix _ -> empty
 
 
 valueDecl :: GenEnv -> ValueDecl -> Doc
@@ -188,13 +380,18 @@ generateExpr = generateExprIn emptyGenEnv
 
 
 -- | Generate an expression with a known generator environment. Foreign
--- imports map to qualified @pkg::fn@ calls per LANGUAGE.md
+-- imports map to qualified @pkg::fn@ calls per LANGUAGE2.md
 -- section 13.9.
 generateExprIn :: GenEnv -> Expr -> Text
 generateExprIn env = \case
     ELit _ lit -> literal lit
     EVar n -> resolvedName env n
-    ECon n -> upperText n   -- constructors are R functions of the same name
+    ECon n ->
+        -- Nullary constructors (`True`, `False`, `Nothing`) lower
+        -- directly: `True`/`False` to R booleans, others to a tagged
+        -- list. n-ary constructors are caught by the EApp case below
+        -- and lowered with their arguments together.
+        nullaryCon n
     ELambda _ ps body ->
         "function("
             Prelude.<> sepBy ", " (Prelude.fmap lowerText ps)
@@ -222,13 +419,51 @@ generateExprIn env = \case
             (head_, args) = collectApp call
         in
         case head_ of
-            EVar n -> callR (resolvedName env n) (Prelude.fmap (generateExprIn env) args)
-            ECon n -> callR (upperText n) (Prelude.fmap (generateExprIn env) args)
+            EVar n
+              | Just template <- Map.lookup (lowerText n) (geForeignVia env) ->
+                  -- The foreign import declared a `via "<template>"`
+                  -- clause (M3.9): substitute @$1@, @$2@, ... in the
+                  -- template with the rendered Quone arguments
+                  -- in source order.
+                  expandViaTemplate
+                    template
+                    (Prelude.fmap (generateExprIn env) args)
+            EVar n
+              | Just body <- Map.lookup (lowerText n) (geExternBodies env) ->
+                  -- The callee was declared in the prelude as an
+                  -- `extern` value: look up its R body and emit
+                  -- `<r>(args...)`. Replaces the legacy if_else
+                  -- special case (LANGUAGE2.md sections 10, 8.7).
+                  externCall env body args
+            EVar n ->
+                -- Foreign imports of `purrr::*` family functions
+                -- expect the data first (`.x`), function second
+                -- (`.f`), even though Quone's curry order puts the
+                -- function first (`map fn xs`). Swap when the
+                -- qualified name needs it (KNOWN_FAILURES #3).
+                -- Promoted to `import ... via "..."` in M3, which
+                -- generalises this to any foreign import.
+                let
+                    resolved = resolvedName env n
+                    rendered = Prelude.fmap (generateExprIn env) args
+                    finalArgs = if needsPurrrSwap resolved Prelude.&& Prelude.length rendered Prelude.>= 2
+                        then case rendered of
+                            (fn : xs : rest) -> xs : fn : rest
+                            _ -> rendered
+                        else rendered
+                in
+                callR resolved finalArgs
+            ECon n ->
+                -- Constructor application: build the tagged list
+                -- representation directly. The case-pattern lowering
+                -- (see `patternToTest`) reads from the same shape:
+                -- `list(tag = "Just", values = list(arg1, arg2, ...))`.
+                conApply n (Prelude.fmap (generateExprIn env) args)
             _ -> callR (renderCallHead env head_) (Prelude.fmap (generateExprIn env) args)
     EBinOp _ op l r ->
         renderBinary env op l r
-    EUnary _ OpNeg e ->
-        "-" Prelude.<> renderUnaryOperand env e
+    EUnary _ op e ->
+        unaryOpR env op Prelude.<> renderUnaryOperand env e
     EPipe _ lhs rhs ->
         renderPipeLhs env lhs Prelude.<> " |> " Prelude.<> generatePipeRhs env rhs
     EField _ record fname ->
@@ -261,18 +496,232 @@ resolvedName env n =
     Map.findWithDefault bare bare (gePkgQualifiers env)
 
 
+-- | Substitute @$1@, @$2@, ... in a `via` template with the
+-- corresponding rendered Quone argument (M3.9).
+--
+-- A reference to @$N@ where N is out of range expands to an empty
+-- string; this is intentionally permissive (the template author
+-- knows the arity) — a future @validate@ check could tighten this
+-- to a diagnostic when the typer's arity disagrees.
+expandViaTemplate :: Text -> [Text] -> Text
+expandViaTemplate template args =
+    Prelude.foldl'
+        (\acc (i, arg) ->
+            T.replace ("$" Prelude.<> T.pack (Prelude.show i)) arg acc)
+        template
+        (Prelude.zip [1 :: Prelude.Int ..] args)
+
+
+-- | Should this foreign-import call swap its first two arguments to
+-- match R's data-first convention?
+--
+-- Today: hardcoded to `purrr::*` callables that follow the
+-- @(.x, .f, ...)@ pattern (most of `purrr`). Quone's curry order
+-- puts the function first (`map fn xs`), so without a swap the
+-- generated R is `purrr::map(fn, xs)` which is broken
+-- (KNOWN_FAILURES #3).
+--
+-- M3 replaces this with a general `import ... via "<template>"`
+-- mechanism.
+needsPurrrSwap :: Text -> Prelude.Bool
+needsPurrrSwap qualified =
+    Prelude.any
+        (\fn -> qualified Prelude.== "purrr::" Prelude.<> fn)
+        purrrSwapList
+
+
+-- | The `purrr::*` functions whose first parameter is the data.
+-- Sourced from <https://purrr.tidyverse.org>.
+purrrSwapList :: [Text]
+purrrSwapList =
+    -- map family
+    [ "map", "map_chr", "map_dbl", "map_int", "map_lgl", "map_raw"
+    , "map_dfc", "map_dfr", "map_vec"
+    , "imap", "imap_chr", "imap_dbl", "imap_int", "imap_lgl"
+    , "imap_dfc", "imap_dfr", "imap_vec"
+    , "lmap", "lmap_at", "lmap_if"
+    -- map2 family (2-vector args; data is .x, .y, fn is .f at position 3)
+    -- Don't swap; positional layout already matches if the user knows it
+    -- walk family
+    , "walk", "walk2", "iwalk"
+    -- predicate / reduce family
+    , "every", "some", "none", "keep", "discard", "compact"
+    , "detect", "detect_index"
+    , "reduce", "reduce_right", "reduce2", "accumulate", "accumulate_right"
+    -- pluck / modify
+    , "pluck", "modify", "modify_at", "modify_if", "modify_in"
+    -- transpose / list_*
+    , "transpose"
+    ]
+
+
+-- | Lower a nullary constructor reference (`True`, `False`,
+-- `Nothing`, or any user ADT constructor with no arguments). The two
+-- `Logical` constructors lower to R's reserved boolean names; every
+-- other nullary constructor lowers to a tagged list with no values.
+nullaryCon :: UpperName -> Text
+nullaryCon n = case upperText n of
+    "True" -> "TRUE"
+    "False" -> "FALSE"
+    other -> "list(tag = \"" Prelude.<> other Prelude.<> "\", values = list())"
+
+
+-- | Lower a constructor application. The args are already-rendered
+-- argument expressions; this wraps them in the tagged list shape
+-- the case-pattern lowering reads from.
+conApply :: UpperName -> [Text] -> Text
+conApply n args = case upperText n of
+    "True" -> "TRUE"   -- defensive: True/False shouldn't take args, but be safe
+    "False" -> "FALSE"
+    other ->
+        "list(tag = \""
+            Prelude.<> other
+            Prelude.<> "\", values = list("
+            Prelude.<> sepBy ", " args
+            Prelude.<> "))"
+
+
+-- | Lower a fully-applied call to a prelude @extern@ value. Picks
+-- the right R callable string based on the body shape:
+--
+--   * 'ExternSimple r' — emit @r(args...)@ verbatim.
+--   * 'ExternDispatch r dispatchOn' — pick a type-suffixed variant
+--     of @r@ (e.g. @purrr::map@ → @purrr::map_dbl@) based on the
+--     syntactic shape of the function argument, and emit the call
+--     with @purrr@'s @(.x, .f)@ argument order (vector first,
+--     function second), which is the inverse of Quone's curried
+--     @map fn xs@ order.
+externCall :: GenEnv -> ExternBody -> [Expr] -> Text
+externCall env body args =
+    case body of
+        ExternSimple _ r ->
+            callR (parenthesiseIfFn r) (Prelude.fmap (generateExprIn env) args)
+        ExternDispatch _ r _dispatchOn ->
+            -- Curried Quone signature: `map fn xs`. R's purrr::map
+            -- takes `(.x, .f)`. Swap the first two arguments and
+            -- pick the type suffix from the function body.
+            case args of
+                (fn : xs : rest) ->
+                    let
+                        suffix = mapSuffix fn
+                        renderedArgs =
+                            Prelude.fmap (generateExprIn env) (xs : fn : rest)
+                    in
+                    callR (r Prelude.<> suffix) renderedArgs
+                _ ->
+                    -- Underapplied: fall back to the verbatim form so
+                    -- the resulting R is at least syntactically valid.
+                    callR r (Prelude.fmap (generateExprIn env) args)
+
+
+-- | If the extern body string looks like an R function expression
+-- (e.g. `"function(p, xs) sum(...)"`), wrap it in parens so the
+-- subsequent `(args...)` actually applies it. Bare callables
+-- (`"+"`, `"mean"`, `"dplyr::if_else"`) pass through unchanged.
+parenthesiseIfFn :: Text -> Text
+parenthesiseIfFn r =
+    if T.isPrefixOf "function" r
+        then "(" Prelude.<> r Prelude.<> ")"
+        else r
+
+
+-- | Syntactic guess at the result element type of a function passed
+-- to @map@. Returns the @purrr::map_*@ suffix or @""@ for the
+-- generic case.
+--
+-- Best-effort: covers the common cases (lambda returning a literal,
+-- a comparison, an integer-only operator, or @sqrt@) and falls back
+-- to generic @purrr::map@ otherwise. A complete solution would
+-- re-run type inference on the function argument; for initial release the
+-- syntactic check is sufficient and documented as @[planned]@ for
+-- replacement.
+mapSuffix :: Expr -> Text
+mapSuffix = \case
+    ELambda _ _ body -> bodySuffix body
+    -- A bare named function: look up known prelude functions.
+    EVar n -> namedFnSuffix (lowerText n)
+    _ -> ""
+  where
+    bodySuffix = \case
+        ELit _ (LDouble _) -> "_dbl"
+        ELit _ (LInt _) -> "_int"
+        ELit _ (LChar _) -> "_chr"
+        ECon n
+          | upperText n Prelude.== "True" Prelude.|| upperText n Prelude.== "False" -> "_lgl"
+        -- Comparison operators always return Logical.
+        EBinOp _ op _ _
+          | op `Prelude.elem` [OpEq, OpNeq, OpGt, OpLt, OpGe, OpLe] -> "_lgl"
+        -- Integer-only operators always return Integer.
+        EBinOp _ op _ _
+          | op `Prelude.elem` [OpIntDiv, OpMod] -> "_int"
+        -- Double-only operators always return Double.
+        EBinOp _ OpExp _ _ -> "_dbl"
+        -- Arithmetic operators preserve the element type. Try the
+        -- left operand's literal kind, then the right's, before
+        -- giving up to a generic dispatch.
+        EBinOp _ _ l r -> firstNonEmpty (bodySuffix l) (bodySuffix r)
+        EUnary _ OpNeg e -> bodySuffix e
+        EApp _ f _ -> case collectAppHead f of
+            Just n -> namedFnSuffix n
+            Nothing -> ""
+        _ -> ""
+
+    firstNonEmpty a b = if T.null a then b else a
+
+    namedFnSuffix = \case
+        "sqrt" -> "_dbl"
+        "to_double" -> "_dbl"
+        "mean" -> "_dbl"
+        "sum" -> "_dbl"
+        "length" -> "_int"
+        _ -> ""
+
+    collectAppHead :: Expr -> Maybe Text
+    collectAppHead = \case
+        EVar n -> Just (lowerText n)
+        EApp _ f _ -> collectAppHead f
+        _ -> Nothing
+
+
 -- | When a verb appears outside a pipe (rare; the recommended style
 -- is `xs |> verb args`), emit a function reference. The compiler does
 -- not normally produce this path, but having a sensible lowering keeps
 -- the generator total.
+--
+-- Two cases:
+--
+--   1. The verb's name shadows a prelude `extern` (e.g. `count` is
+--      both a verb keyword AND a prelude function). When the user
+--      writes `count predicate xs` outside a pipe, the parser
+--      produces an EVerb but the user's intent is the prelude
+--      function. Look up the extern body first and dispatch via
+--      'externCall' so the lowered R uses the prelude semantics.
+--   2. Otherwise fall back to `dplyr::verbName(args...)`, which
+--      mirrors the pipe path.
 verbCall :: GenEnv -> Verb -> [DplyrArg] -> Text
 verbCall env verb args =
     let
-        fn = "dplyr::" Prelude.<> verbName verb
+        verbText = verbName verb
+        plainArgs = Prelude.fmap dplyrArgExpr args
     in
-    case args of
-        [] -> fn
-        _ -> callR fn (Prelude.fmap (dplyrArgR env) args)
+    case (Map.lookup verbText (geExternBodies env), allJust plainArgs) of
+        (Just body, Just exprs) ->
+            externCall env body exprs
+        _ ->
+            let
+                fn = "dplyr::" Prelude.<> verbText
+            in
+            case args of
+                [] -> fn
+                _ -> callR fn (Prelude.fmap (dplyrArgR env) args)
+  where
+    dplyrArgExpr = \case
+        DAExpr e -> Just e
+        _ -> Prelude.Nothing
+    allJust :: [Maybe a] -> Maybe [a]
+    allJust [] = Just []
+    allJust (Just x : xs) = Prelude.fmap (x :) (allJust xs)
+    allJust (Prelude.Nothing : _) = Prelude.Nothing
 
 
 -- | Lower the right-hand side of a pipe. When the RHS is a verb, we
@@ -292,12 +741,31 @@ generatePipeRhs env = \case
 literal :: Literal -> Text
 literal = \case
     LInt n -> T.pack (Prelude.show n) Prelude.<> "L"
-    LDouble d -> T.pack (Prelude.show (d :: Prelude.Double))
+    LDouble d -> rDouble d
     LChar t -> "\"" Prelude.<> t Prelude.<> "\""
 
 
-binOpR :: BinOp -> Text
-binOpR = \case
+rDouble :: Prelude.Double -> Text
+rDouble d =
+    let
+        rounded = Prelude.round d :: Prelude.Integer
+    in
+    if d Prelude.== Prelude.fromInteger rounded
+        then T.pack (Prelude.show rounded)
+        else T.pack (Prelude.show d)
+
+
+-- | The R spelling of a binary operator. Looked up from
+-- 'geOperatorR' (populated from prelude @infix@ declarations); falls
+-- back to a hardcoded default when the prelude is unavailable, so
+-- callers using 'emptyGenEnv' (e.g. tests) still produce sensible
+-- output.
+binOpR :: GenEnv -> BinOp -> Text
+binOpR env op = Map.findWithDefault (defaultBinOpR op) op (geOperatorR env)
+
+
+defaultBinOpR :: BinOp -> Text
+defaultBinOpR = \case
     OpAdd -> "+"
     OpSub -> "-"
     OpMul -> "*"
@@ -311,6 +779,15 @@ binOpR = \case
     OpLt -> "<"
     OpGe -> ">="
     OpLe -> "<="
+
+
+unaryOpR :: GenEnv -> UnaryOp -> Text
+unaryOpR env op = Map.findWithDefault (defaultUnaryOpR op) op (geUnaryR env)
+
+
+defaultUnaryOpR :: UnaryOp -> Text
+defaultUnaryOpR = \case
+    OpNeg -> "-"
 
 
 data Assoc
@@ -329,7 +806,7 @@ renderBinary :: GenEnv -> BinOp -> Expr -> Expr -> Text
 renderBinary env op l r =
     renderBinaryOperand env op BinLeft l
         Prelude.<> " "
-        Prelude.<> binOpR op
+        Prelude.<> binOpR env op
         Prelude.<> " "
         Prelude.<> renderBinaryOperand env op BinRight r
 
@@ -515,7 +992,7 @@ lowerCase env scrut arms
         chainShape env scrut arms
 
 
--- | LANGUAGE.md section 13.6: when a case has exactly two arms
+-- | LANGUAGE2.md section 13.6: when a case has exactly two arms
 -- 'True' -> a and 'False' -> b (in either order), lower to R's
 -- native 'if'. This is the optimisation that the section 5.3
 -- if-desugaring relies on so ordinary 'if' compiles to ordinary R 'if'.
@@ -570,12 +1047,29 @@ buildChain env scrutVar = go
     go (a : rest) =
         let
             (test, binds) = patternToTest scrutVar (caseArmPattern a)
+            armBody = generateExprIn env (caseArmBody a)
+            -- Pattern guard (M3.3): the arm only fires if the
+            -- pattern matches AND the guard evaluates to TRUE. The
+            -- guard sees the pattern's bindings, so it must be
+            -- emitted INSIDE the bind block (after binds, before
+            -- the body), not as part of the outer pattern test.
+            guardedBody = case caseArmGuard a of
+                Nothing -> armBody
+                Just g ->
+                    -- `if (guard) body else <fallthrough>`. The else
+                    -- branch falls through to the next arm.
+                    "if ("
+                        Prelude.<> generateExprIn env g
+                        Prelude.<> ") "
+                        Prelude.<> armBody
+                        Prelude.<> " else "
+                        Prelude.<> go rest
             body =
                 if Prelude.null binds
-                    then generateExprIn env (caseArmBody a)
+                    then guardedBody
                     else
                         "{ "
-                            Prelude.<> sepBy "; " (binds Prelude.++ [generateExprIn env (caseArmBody a)])
+                            Prelude.<> sepBy "; " (binds Prelude.++ [guardedBody])
                             Prelude.<> " }"
         in
         case test of
@@ -589,6 +1083,7 @@ buildChain env scrutVar = go
                         _ -> " else " Prelude.<> go rest
             Nothing ->
                 -- Wildcard / variable pattern: unconditional match.
+                -- If there's a guard, fall through on guard-false.
                 body
 
 
@@ -609,10 +1104,15 @@ patternToTest scrut = \case
                 Prelude.zipWith
                     (\i arg -> case arg of
                         PVar argName ->
+                            -- R's `[[i]]` extracts a single list element
+                            -- (without enclosing it in a one-element list,
+                            -- which `[i]` would do). The constructor
+                            -- arguments live as positional entries of
+                            -- the values list, so we want `[[i]]`.
                             lowerText argName
                                 Prelude.<> " <- "
                                 Prelude.<> scrut
-                                Prelude.<> "$values["
+                                Prelude.<> "$values[["
                                 Prelude.<> T.pack (Prelude.show (i :: Prelude.Int))
                                 Prelude.<> "]]"
                         _ -> "")
@@ -634,7 +1134,7 @@ recordFieldBind scrut = \case
     RpfFull _ n (PVar v) ->
         lowerText v Prelude.<> " <- " Prelude.<> scrut Prelude.<> "$" Prelude.<> lowerText n
     RpfFull _ n _ ->
-        -- Nested patterns are valid; for v0.0.1 lowering we collapse
+        -- Nested patterns are valid; for initial release lowering we collapse
         -- them to a simple field bind (pattern-matching inside the
         -- bound value would need a recursive call).
         lowerText n Prelude.<> " <- " Prelude.<> scrut Prelude.<> "$" Prelude.<> lowerText n
@@ -656,22 +1156,9 @@ verbName = \case
     VUngroup -> "ungroup"
     VArrange -> "arrange"
     VRename -> "rename"
-    VDistinct -> "distinct"
-    VDistinctAll -> "distinct"
-    VCount -> "count"
-    VSlice -> "slice"
-    VPull -> "pull"
-    VRelocate -> "relocate"
-    VTransmute -> "transmute"
-    VMutateEach -> "mutate"
-    VSummarizeEach -> "summarize"
     VLeftJoin -> "left_join"
     VRightJoin -> "right_join"
     VInnerJoin -> "inner_join"
-    VFullJoin -> "full_join"
-    VAntiJoin -> "anti_join"
-    VSemiJoin -> "semi_join"
-    VCrossJoin -> "cross_join"
 
 
 dplyrArgR :: GenEnv -> DplyrArg -> Text

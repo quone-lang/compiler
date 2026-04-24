@@ -1,5 +1,0 @@
-# A tibble: 2 × 3
-  dept      n   avg
-  <chr> <int> <dbl>
-1 math      3  82.7
-2 cs        3  77

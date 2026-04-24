@@ -1,6 +1,6 @@
 {-| Abstract syntax tree.
 
-This module defines the AST exactly as specified in LANGUAGE.md
+This module defines the AST exactly as specified in LANGUAGE2.md
 section 6, with the desugarings from section 5.3 already applied. In
 particular:
 
@@ -13,7 +13,7 @@ Every node carries a 'SourceSpan' so diagnostics from later phases
 (typing, lowering) can still point at the original source range.
 
 The 'Verb' enum lists every reserved dataframe verb from
-LANGUAGE.md section 3.4, even those whose typing rules are still
+LANGUAGE2.md section 3.4, even those whose typing rules are still
 @[planned]@; the parser already accepts them and the AST tracks the
 shape so future revisions can add typing without breaking the AST.
 
@@ -34,7 +34,15 @@ module Quone.Ast.Source
     , ImportDecl (..)
     , ImportSelection (..)
     , ForeignName (..)
+    , foreignBindName
+    , ForeignClassification (..)
     , ValueDecl (..)
+    , ExternDecl (..)
+    , ExternBody (..)
+    , ExternClassification (..)
+    , InfixDecl (..)
+    , PrefixDecl (..)
+    , Fixity (..)
       -- * Types
     , TypeSig (..)
     , TypeAtom (..)
@@ -111,6 +119,11 @@ data Program = Program
     { programSpan :: SourceSpan
     , programModule :: Maybe ModuleDecl
     , programDecls :: [Decl]
+    , -- | True for the embedded prelude module loaded by
+      -- 'Quone.Prelude.Load.loadPrelude'. The implicit-import injector
+      -- and the @extern@/@infix@ parser checks both consult this flag
+      -- so user code cannot use prelude-only syntax.
+      programIsPrelude :: Prelude.Bool
     }
     deriving (Prelude.Show, Prelude.Eq)
 
@@ -157,6 +170,12 @@ data Decl
     | DTypeAlias TypeAliasDecl
     | DImport ImportDecl
     | DValue ValueDecl
+    | -- | Prelude-only @extern@ binding (value or primitive type).
+      DExtern ExternDecl
+    | -- | Prelude-only @infix@ operator overload.
+      DInfix InfixDecl
+    | -- | Prelude-only @prefix@ operator overload (unary @-@).
+      DPrefix PrefixDecl
     deriving (Prelude.Show, Prelude.Eq)
 
 
@@ -166,8 +185,13 @@ declSpan = \case
     DTypeAlias d -> aliasDeclSpan d
     DImport d -> case d of
         QuoneImport sp _ _ -> sp
-        ForeignImport sp _ _ -> sp
+        ForeignImport sp _ _ _ -> sp
     DValue d -> valueDeclSpan d
+    DExtern d -> case d of
+        ExternValue sp _ _ _ _ _ -> sp
+        ExternType sp _ _ _ -> sp
+    DInfix d -> infixDeclSpan d
+    DPrefix d -> prefixDeclSpan d
 
 
 data TypeDecl = TypeDecl
@@ -200,7 +224,20 @@ data TypeAliasDecl = TypeAliasDecl
 
 data ImportDecl
     = QuoneImport SourceSpan ModulePath ImportSelection
-    | ForeignImport SourceSpan ForeignName TypeSig
+    | -- | A foreign-import declaration. The 'ForeignClassification'
+      -- carries the (optional) @elementwise@/@reducer@ modifier from
+      -- LANGUAGE2.md section 4.5; it determines whether the imported
+      -- name may appear in a dataframe verb right-hand side.
+      ForeignImport SourceSpan ForeignClassification ForeignName TypeSig
+    deriving (Prelude.Show, Prelude.Eq)
+
+
+-- | The R-runtime classification declared for a foreign import.
+-- @Opaque@ is the default when no modifier is given.
+data ForeignClassification
+    = FCOpaque
+    | FCElementwise
+    | FCReducer
     deriving (Prelude.Show, Prelude.Eq)
 
 
@@ -215,8 +252,26 @@ data ForeignName = ForeignName
     { foreignSpan :: SourceSpan
     , foreignPackage :: [LowerName]   -- empty list = base R
     , foreignFn :: LowerName
+    , foreignAlias :: Maybe LowerName
+    -- ^ Optional `as <newname>` rename (M3.8). When present, the
+    -- import binds the alias in the local scope; the underlying
+    -- @pkg::fn@ qualifier in the generated R uses 'foreignFn'.
+    , foreignVia :: Maybe Text
+    -- ^ Optional `via "<template>"` (M3.9). The template is the
+    -- raw R call to emit at every call site, with @$1@, @$2@, ...
+    -- substituted by the rendered Quone arguments. Subsumes M1's
+    -- hardcoded purrr argument swap.
     }
     deriving (Prelude.Show, Prelude.Eq)
+
+
+-- | The name a foreign import binds in the local scope. Returns the
+-- alias if one was given (`import pkg.fn as my_fn`), otherwise the
+-- function's own name.
+foreignBindName :: ForeignName -> LowerName
+foreignBindName f = case foreignAlias f of
+    Just alias -> alias
+    Nothing -> foreignFn f
 
 
 data ValueDecl = ValueDecl
@@ -226,6 +281,97 @@ data ValueDecl = ValueDecl
     , valueDeclParams :: [LowerName]
     , valueDeclBody :: Expr
     , valueDeclDoc :: Maybe DocBlock
+    , valueDeclClassification :: ForeignClassification
+    -- ^ Optional `elementwise` / `reducer` modifier on a Quone
+    -- binding (M3.10). When present, this overrides the
+    -- body-inference classification used by `mutate` / `summarize`
+    -- right-hand side checks. Defaults to `FCOpaque` (= "infer from
+    -- body"), preserving initial release behaviour for un-annotated bindings.
+    }
+    deriving (Prelude.Show, Prelude.Eq)
+
+
+-- | Prelude-only @extern@ declaration (LANGUAGE2.md sections 8.2 and
+-- 10). Either a value binding with a compiler-supplied R callable, or
+-- a primitive type with no source-language constructors.
+data ExternDecl
+    = -- | @extern [classification] name : sig = "rString" [{ dispatch_on = "var" }]@
+      ExternValue
+        SourceSpan
+        ExternClassification
+        LowerName
+        TypeSig
+        ExternBody
+        (Maybe DocBlock)
+    | -- | @extern type Name [a b ...]@. Wired in Phase D.
+      ExternType
+        SourceSpan
+        UpperName
+        [LowerName]
+        (Maybe DocBlock)
+    deriving (Prelude.Show, Prelude.Eq)
+
+
+-- | The body of an @extern@ value binding.
+data ExternBody
+    = -- | Plain R callable: @= "<r>"@.
+      ExternSimple SourceSpan Text
+    | -- | @= "<r>" { dispatch_on = "<typevar>" }@. Used by @map@ /
+      -- @map2@ to pick @purrr::map_*@ at codegen time.
+      ExternDispatch SourceSpan Text Text
+    deriving (Prelude.Show, Prelude.Eq)
+
+
+-- | Classification annotation on an @extern@ value binding. Mirrors
+-- 'ForeignClassification' but lives separately so the prelude is
+-- explicit about what it declares.
+data ExternClassification
+    = ECOpaque
+    | ECElementwise
+    | ECReducer
+    deriving (Prelude.Show, Prelude.Eq)
+
+
+-- | Prelude-only @infix@ declaration: one overload of a binary
+-- operator. Multiple declarations of the same operator with different
+-- signatures stack into the dispatch table consulted by the type
+-- checker (see Phase B).
+data InfixDecl = InfixDecl
+    { infixDeclSpan :: SourceSpan
+    , infixDeclFixity :: Fixity
+    , infixDeclPrec :: Int
+    , infixDeclOp :: BinOp
+    , infixDeclSig :: TypeSig
+    , infixDeclConstraints :: [(LowerName, Maybe UpperName)]
+    -- ^ Per-binder class constraints from a `forall n: Number, ...`
+    -- prefix on this overload's signature (M3.11). Used by the type
+    -- checker to instantiate the operator's TyVars with the right
+    -- 'TyVarConstraint'.
+    , infixDeclR :: Text
+    , infixDeclDoc :: Maybe DocBlock
+    }
+    deriving (Prelude.Show, Prelude.Eq)
+
+
+data Fixity
+    = FLeft
+    | FRight
+    | FNon
+    deriving (Prelude.Show, Prelude.Eq)
+
+
+-- | Prelude-only @prefix@ declaration: one overload of a unary
+-- operator (currently only unary @-@).
+data PrefixDecl = PrefixDecl
+    { prefixDeclSpan :: SourceSpan
+    , prefixDeclPrec :: Int
+    , prefixDeclOp :: UnaryOp
+    , prefixDeclSig :: TypeSig
+    , prefixDeclConstraints :: [(LowerName, Maybe UpperName)]
+    -- ^ Per-binder class constraints (M3.11). Empty if no
+    -- @forall n: Number.@ prefix was given.
+    , prefixDeclR :: Text
+    , prefixDeclDoc :: Maybe DocBlock
     }
     deriving (Prelude.Show, Prelude.Eq)
 
@@ -321,17 +467,22 @@ data Literal
 data BinOp
     = OpAdd | OpSub | OpMul | OpDiv | OpIntDiv | OpMod | OpExp
     | OpEq | OpNeq | OpGt | OpLt | OpGe | OpLe
-    deriving (Prelude.Show, Prelude.Eq)
+    deriving (Prelude.Show, Prelude.Eq, Prelude.Ord)
 
 
 data UnaryOp
     = OpNeg
-    deriving (Prelude.Show, Prelude.Eq)
+    deriving (Prelude.Show, Prelude.Eq, Prelude.Ord)
 
 
 data CaseArm = CaseArm
     { caseArmSpan :: SourceSpan
     , caseArmPattern :: Pattern
+    , caseArmGuard :: Maybe Expr
+    -- ^ Optional pattern guard (M3.3): @Just n | n > 0 -> ...@.
+    -- The guard MUST type as 'Logical'; the arm only fires if the
+    -- pattern matches AND the guard evaluates to 'True'. A 'Nothing'
+    -- guard means the arm fires whenever the pattern matches.
     , caseArmBody :: Expr
     }
     deriving (Prelude.Show, Prelude.Eq)
@@ -353,13 +504,11 @@ data FieldBinding = FieldBinding
     deriving (Prelude.Show, Prelude.Eq)
 
 
--- | Reserved dataframe verbs (LANGUAGE.md section 3.4).
+-- | Initial-release dataframe verbs.
 data Verb
     = VSelect | VFilter | VMutate | VSummarize | VGroupBy | VUngroup
-    | VArrange | VRename | VDistinct | VDistinctAll | VCount | VSlice
-    | VPull | VRelocate | VTransmute | VMutateEach | VSummarizeEach
-    | VLeftJoin | VRightJoin | VInnerJoin | VFullJoin | VAntiJoin
-    | VSemiJoin | VCrossJoin
+    | VArrange | VRename
+    | VLeftJoin | VRightJoin | VInnerJoin
     deriving (Prelude.Show, Prelude.Eq, Prelude.Ord, Prelude.Enum, Prelude.Bounded)
 
 

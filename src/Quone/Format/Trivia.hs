@@ -1,11 +1,11 @@
 {-| Comments and blank-line markers that the parser currently drops.
 
-The CST in 'Quone.Parse.Cst' tracks doc blocks (via 'CDocBlock') but
-not other comments or blank-line patterns. Once the lexer in
-'Quone.Lex.Lexer' is extended to attach trivia to tokens this module
-gains a richer representation; for v0.0.1 we expose a small types
-shell so 'Quone.Format.Rules' can reference it without depending on
-the lexer extension landing first.
+The CST in 'Quone.Parse.Cst' tracks doc blocks (via 'CDocBlock') so
+those round-trip through the formatter. Block comments and trailing
+inline @#@ comments are dropped in initial release; full trivia preservation
+(see LANGUAGE2.md section 19.7) requires extending the lexer to
+attach trivia tokens and threading them through the CST. Promoted
+to future release.
 
 -}
 module Quone.Format.Trivia

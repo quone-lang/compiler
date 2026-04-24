@@ -23,6 +23,7 @@ from R:
 install.packages("pak")
 pak::pak("quone-lang/quone")
 quone::install_compiler()
+quone::install_lsp("code")    # or "cursor" / "positron"
 ```
 
 Or download a release binary directly from
@@ -42,17 +43,18 @@ and put it on `PATH`.
 cd compiler/editors/vscode
 npm install
 npm run compile
-npm run package    # produces dist/quone-0.0.1.vsix
-code --install-extension dist/quone-0.0.1.vsix
+npm run package    # produces dist/quone-vscode.vsix
+code --install-extension dist/quone-vscode.vsix
 ```
 
 Cursor uses the same extension format:
 
 ```sh
-cursor --install-extension dist/quone-0.0.1.vsix
+cursor --install-extension dist/quone-vscode.vsix
 ```
 
-You can also run `quone::install_lsp("cursor")` from R.
+You can also run `quone::install_lsp("cursor")` from R. The R helper installs
+the extension and writes `quone.compilerPath` into that editor's user settings.
 
 ## Working with Cursor and Positron
 
