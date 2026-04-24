@@ -6,6 +6,7 @@
   "patterns": [
     { "include": "#doc-comments" },
     { "include": "#comments" },
+    { "include": "#type-signatures" },
     { "include": "#strings" },
     { "include": "#numbers" },
     { "include": "#keywords" },
@@ -74,11 +75,31 @@
       "patterns": [
         {
           "name": "support.function.dataframe.quone",
-          "match": "\\b(dataframe|select|filter|mutate|summarize|group_by|ungroup|arrange|rename|distinct|distinct_all|count|slice|pull|relocate|transmute|mutate_each|summarize_each|left_join|right_join|inner_join|full_join|anti_join|semi_join|cross_join)\\b"
+          "match": "\\b(dataframe|select|filter|mutate|summarize|group_by|ungroup|arrange|rename|left_join|right_join|inner_join)\\b"
         },
         {
           "name": "keyword.modifier.quone",
-          "match": "\\b(desc|asc|on|as|where|cols)\\b"
+          "match": "\\b(desc|asc)\\b"
+        }
+      ]
+    },
+    "type-signatures": {
+      "patterns": [
+        {
+          "begin": "(:)",
+          "beginCaptures": {
+            "1": { "name": "keyword.operator.type-annotation.quone" }
+          },
+          "end": "$",
+          "name": "meta.type-signature.quone",
+          "patterns": [
+            { "include": "#strings" },
+            { "include": "#type-operators" },
+            { "include": "#types" },
+            { "include": "#type-variables" },
+            { "include": "#type-punctuation" },
+            { "include": "#dataframe-verbs" }
+          ]
         }
       ]
     },
@@ -87,6 +108,30 @@
         {
           "name": "entity.name.type.quone",
           "match": "\\b[A-Z][A-Za-z0-9_]*\\b"
+        }
+      ]
+    },
+    "type-variables": {
+      "patterns": [
+        {
+          "name": "storage.type.variable.quone",
+          "match": "\\b[a-z][A-Za-z0-9_]*\\b"
+        }
+      ]
+    },
+    "type-operators": {
+      "patterns": [
+        {
+          "name": "keyword.operator.arrow.quone",
+          "match": "->"
+        }
+      ]
+    },
+    "type-punctuation": {
+      "patterns": [
+        {
+          "name": "punctuation.definition.typeparameters.quone",
+          "match": "[{}(),]"
         }
       ]
     },
