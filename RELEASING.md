@@ -27,7 +27,7 @@ with:
 
 | field | allowed values                  |
 | ----- | ------------------------------- |
-| `os`  | `macos`, `linux`, `windows`     |
+| `os`  | `macos`, `linux`                |
 | `arch`| `x86_64`, `arm64`               |
 
 The supported `(os, arch)` pairs for initial release are:
@@ -36,11 +36,9 @@ The supported `(os, arch)` pairs for initial release are:
 - `quonec-macos-arm64.tar.gz`
 - `quonec-linux-x86_64.tar.gz`
 - `quonec-linux-arm64.tar.gz`
-- `quonec-windows-x86_64.tar.gz`
 
-Each tarball MUST contain a single binary named `quonec` (or
-`quonec.exe` on Windows) at the archive root, marked executable
-(`chmod +x`) for POSIX targets.
+Each tarball MUST contain a single binary named `quonec` at the archive root,
+marked executable (`chmod +x`).
 
 The VS Code-compatible extension MUST be published as:
 
@@ -86,6 +84,8 @@ initial release, integrity is taken from GitHub's HTTPS transport.
 ## Out of scope for initial release
 
 - Statically-linked Linux musl builds.
+- Windows builds. The current dependency tree contains filenames that cannot be
+  checked out on Windows runners.
 - 32-bit targets.
 - Homebrew / Scoop / Winget formulae.
 - Signed Apple notarised binaries.

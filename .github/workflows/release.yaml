@@ -7,7 +7,7 @@ on:
 
 # Asset names follow `RELEASING.md`:
 #   quonec-<os>-<arch>.tar.gz
-# os in {macos, linux, windows}, arch in {x86_64, arm64}.
+# os in {macos, linux}, arch in {x86_64, arm64}.
 permissions:
   contents: write
 
@@ -23,7 +23,6 @@ jobs:
           - {os: macos,   arch: arm64,  runner: macos-latest,  ext: ''}
           - {os: linux,   arch: x86_64, runner: ubuntu-latest, ext: ''}
           - {os: linux,   arch: arm64,  runner: ubuntu-22.04-arm, ext: ''}
-          - {os: windows, arch: x86_64, runner: windows-latest, ext: '.exe'}
     steps:
       - uses: actions/checkout@v4
 
@@ -44,34 +43,22 @@ jobs:
       - name: cabal update
         run: cabal update
 
-      - name: Build optimised binary
-        run: cabal build exe:quonec --enable-executable-stripping -O2
-
-      - name: Stage and package (POSIX)
-        if: matrix.target.os != 'windows'
+      - name: Stage and package
         shell: bash
         run: |
           set -e
           asset="quonec-${{ matrix.target.os }}-${{ matrix.target.arch }}.tar.gz"
-          bin="$(cabal list-bin exe:quonec)"
           stage="$(mktemp -d)"
-          install -m 0755 "$bin" "$stage/quonec"
+          cabal install exe:quonec \
+            --installdir="$stage" \
+            --overwrite-policy=always \
+            --install-method=copy \
+            --enable-executable-stripping \
+            -O2
+          test -x "$stage/quonec"
           tar -czf "$asset" -C "$stage" "quonec"
           ls -la "$asset"
           shasum -a 256 "$asset" > "$asset.sha256"
-
-      - name: Stage and package (Windows)
-        if: matrix.target.os == 'windows'
-        shell: pwsh
-        run: |
-          $asset = "quonec-${{ matrix.target.os }}-${{ matrix.target.arch }}.tar.gz"
-          $bin = (cabal list-bin exe:quonec).Trim()
-          $stage = New-Item -ItemType Directory -Path (Join-Path $env:RUNNER_TEMP "stage") -Force
-          Copy-Item -Path $bin -Destination (Join-Path $stage "quonec.exe")
-          tar -czf $asset -C $stage "quonec.exe"
-          Get-FileHash -Algorithm SHA256 $asset |
-            ForEach-Object { "$($_.Hash.ToLower())  $asset" } |
-            Out-File -Encoding ASCII "$asset.sha256"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
