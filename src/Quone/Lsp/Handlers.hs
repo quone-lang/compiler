@@ -239,7 +239,7 @@ handleHover params state = case lookupContext params state of
                     Prelude.Nothing -> Json.VNull
                     Just sym ->
                         Json.object
-                            [ ("contents", hoverMarkdown sym)
+                            [ ("contents", hoverContents sym)
                             , ("range", spanRange (Symbols.symSpan sym))
                             ]
 
@@ -270,29 +270,34 @@ handleDefinition params state = case lookupContext params state of
                     [] -> Json.VNull
 
 
--- | Helper: render hover contents as LSP MarkupContent.
-hoverMarkdown :: Symbols.Symbol -> Json.Value
-hoverMarkdown sym =
+-- | Helper: render hover contents as LSP MarkedString / MarkedString[].
+--
+-- VS Code/Cursor syntax-highlight MarkedString objects with a language more
+-- reliably than markdown code fences returned as MarkupContent.
+hoverContents :: Symbols.Symbol -> Json.Value
+hoverContents sym =
     let
-        sigLine = case Symbols.symType sym of
+        sigBlock = case Symbols.symType sym of
             Just sch ->
-                "```quone\n"
-                    ++ Symbols.symName sym
-                    ++ " : "
-                    ++ Symbols.renderScheme sch
-                    ++ "\n```"
-            Prelude.Nothing -> "`" ++ Symbols.symName sym ++ "`"
-        body = case Symbols.symDoc sym of
-            [] -> sigLine
-            doc ->
-                sigLine
-                    ++ "\n\n"
-                    ++ T.intercalate "\n" doc
+                Json.object
+                    [ ("language", Json.str "quone")
+                    , ("value"
+                      , Json.str
+                            ( Symbols.symName sym
+                                ++ " : "
+                                ++ Symbols.renderScheme sch
+                            )
+                      )
+                    ]
+            Prelude.Nothing -> Json.str ("`" ++ Symbols.symName sym ++ "`")
     in
-    Json.object
-        [ ("kind", Json.str "markdown")
-        , ("value", Json.str body)
-        ]
+    case Symbols.symDoc sym of
+        [] -> sigBlock
+        doc ->
+            Json.VArray
+                [ sigBlock
+                , Json.str (T.intercalate "\n" doc)
+                ]
 
 
 -- | Best-effort identifier-at-position lookup. Used by go-to-definition

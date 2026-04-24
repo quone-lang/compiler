@@ -25,13 +25,13 @@ suite =
                 CompileOk prog typed ->
                     Prelude.pure (Prelude.length (buildIndex prog typed) === 1)
                 CompileFailed ds -> Prelude.pure (Prelude.length ds === 0)
-        , Harness.test "lsp/hover_uses_quone_fenced_code" <|
-            Prelude.pure hoverUsesQuoneFence
+        , Harness.test "lsp/hover_uses_quone_marked_string" <|
+            Prelude.pure hoverUsesQuoneMarkedString
         ]
 
 
-hoverUsesQuoneFence :: TestResult
-hoverUsesQuoneFence =
+hoverUsesQuoneMarkedString :: TestResult
+hoverUsesQuoneMarkedString =
     let
         uri =
             "file:///hover.Q"
@@ -66,13 +66,21 @@ hoverUsesQuoneFence =
         hover =
             Handlers.handleHover hoverParams state
     in
-    case Json.lookupField "contents" hover
-        Prelude.>>= Json.lookupField "value" of
-        Just (Json.VString body) ->
-            if "```quone" `T.isInfixOf` body && "answer : Double" `T.isInfixOf` body then
+    case Json.lookupField "contents" hover of
+        Just contents ->
+            let
+                language =
+                    Json.lookupField "language" contents
+                        Prelude.>>= Json.asString
+
+                value =
+                    Json.lookupField "value" contents
+                        Prelude.>>= Json.asString
+            in
+            if language Prelude.== Just "quone" && value Prelude.== Just "answer : Double" then
                 Pass
             else
-                Fail ("unexpected hover body: " ++ body)
+                Fail ("unexpected hover contents: " ++ T.pack (Prelude.show contents))
 
         other ->
             Fail ("unexpected hover payload: " ++ T.pack (Prelude.show other))
