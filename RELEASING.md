@@ -32,6 +32,7 @@ with:
 
 The supported `(os, arch)` pairs for initial release are:
 
+- `quonec-macos-x86_64.tar.gz`
 - `quonec-macos-arm64.tar.gz`
 - `quonec-linux-x86_64.tar.gz`
 - `quonec-linux-arm64.tar.gz`
@@ -83,8 +84,6 @@ initial release, integrity is taken from GitHub's HTTPS transport.
 ## Out of scope for initial release
 
 - Statically-linked Linux musl builds.
-- macOS x86_64 builds. GitHub-hosted Intel macOS runners are not reliable enough
-  for the initial release pipeline.
 - Windows builds. The current dependency tree contains filenames that cannot be
   checked out on Windows runners.
 - 32-bit targets.
