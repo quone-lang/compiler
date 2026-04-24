@@ -1,6 +1,6 @@
 {-| Hindley-Milner inference for the initial release expression core.
 
-Implements LANGUAGE2.md sections 8.1 through 8.6 and 8.8:
+Implements LANGUAGE.md sections 8.1 through 8.6 and 8.8:
 
 * HM inference with generalisation at top-level and let bindings;
 * type annotation checking against inferred types;
@@ -252,7 +252,7 @@ markNumeric = \case
 -- | Default every still-unresolved numeric type variable accumulated
 -- during the current declaration to 'Double', then clear the set.
 --
--- Per LANGUAGE2.md section 8.8, R's bare numeric default is double;
+-- Per LANGUAGE.md section 8.8, R's bare numeric default is double;
 -- a Quone author who wants integer arithmetic must either annotate
 -- the binding or use the @L@ literal suffix. This rule runs at the
 -- decl boundary so the defaulting decision is local: it cannot
@@ -514,7 +514,7 @@ typecheckOne holes env decl = case decl of
             qvars = Set.toList (Set.difference (freeTypeVars finalTy) envFTV)
             scheme = Scheme {schemeVars = qvars, schemeBody = finalTy}
             -- Classify the binding's body so verb-rhs checks can
-            -- reject opaque user functions (LANGUAGE2.md sections 8.7
+            -- reject opaque user functions (LANGUAGE.md sections 8.7
             -- and 9.2). Parameters are treated as elementwise (they
             -- are values, not callables) so a body like
             -- @weight / height@ classifies as 'Elementwise'.
@@ -537,12 +537,12 @@ typecheckOne holes env decl = case decl of
         -- Lower-case foreign imports (`import pkg.fn : Ty`) bind a
         -- value of the given type. The R `pkg::fn` qualification is
         -- emitted at code-gen time; here we just need the name in
-        -- scope at the inferred type per LANGUAGE2.md section 4.5.
+        -- scope at the inferred type per LANGUAGE.md section 4.5.
         --
         -- An optional `as <newname>` rename (M3.8) binds the alias
         -- in the local scope; codegen still emits the original name.
         --
-        -- The optional @elementwise@/@reducer@ modifier (LANGUAGE2.md
+        -- The optional @elementwise@/@reducer@ modifier (LANGUAGE.md
         -- section 4.5) is recorded in 'envClassifications' so the
         -- verb typer can reject opaque foreign callees in @mutate@ /
         -- @summarize@ right-hand sides.
@@ -878,7 +878,7 @@ inferExprIn env = \case
         case (applySubst sub lt, rhs) of
             (TyDataframe shape, EVerb vsp verb args) ->
                 -- Dataframe verb on a known schema: dispatch to the
-                -- verb-specific typer (LANGUAGE2.md section 8.7). The
+                -- verb-specific typer (LANGUAGE.md section 8.7). The
                 -- shape carries the schema plus any grouping keys
                 -- introduced by a preceding `group_by` so that
                 -- `summarize` / `ungroup` can consume them
@@ -925,7 +925,7 @@ inferExprIn env = \case
             TyDataframe _ ->
                 inferFail
                     ( typeMismatchDiag sp
-                        "record update target is a dataframe; use `mutate` instead (LANGUAGE2.md section 8.5)"
+                        "record update target is a dataframe; use `mutate` instead (LANGUAGE.md section 8.5)"
                     )
             TyRecord existing -> do
                 fieldsM <-
@@ -1030,7 +1030,7 @@ literalType = \case
 
 
 -- ---------------------------------------------------------------------
--- Operators (LANGUAGE2.md section 8.8)
+-- Operators (LANGUAGE.md section 8.8)
 -- ---------------------------------------------------------------------
 
 
@@ -1071,7 +1071,7 @@ literalVectorLength = \case
 
 
 -- | Dispatch a binary operator against the prelude-declared overload
--- table (LANGUAGE2.md section 8.8). Tries each declared overload in
+-- table (LANGUAGE.md section 8.8). Tries each declared overload in
 -- order and picks the first whose lhs/rhs types unify with the
 -- inferred operand types.
 --
@@ -1342,7 +1342,7 @@ defaultUnaryUnconstrained sp operand overloads =
 
 
 -- | Check that the patterns in a `case` cover every possible value
--- of the scrutinee (LANGUAGE2.md section 8.4 invariant). Misses get a
+-- of the scrutinee (LANGUAGE.md section 8.4 invariant). Misses get a
 -- 'NonExhaustivePattern' diagnostic that lists the missing
 -- constructors.
 --

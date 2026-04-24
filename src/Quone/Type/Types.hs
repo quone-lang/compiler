@@ -1,6 +1,6 @@
 {-| Type representation for the Hindley-Milner type checker.
 
-Encodes the initial release surface from LANGUAGE2.md sections 7 and 8:
+Encodes the initial release surface from LANGUAGE.md sections 7 and 8:
 
 * primitive types (@Integer@, @Double@, @Character@);
 * the built-in 'Logical' custom type (section 7.5.1);
@@ -9,7 +9,7 @@ Encodes the initial release surface from LANGUAGE2.md sections 7 and 8:
 * type applications (e.g. @Vector Double@, @Maybe Integer@);
 * record types (closed: a record literal MUST list every field of
   its type, and a record pattern MUST mention every field too —
-  initial release design decision, see LANGUAGE2.md section 7.6);
+  initial release design decision, see LANGUAGE.md section 7.6);
 * dataframe types (a tagged record-like with vector fields).
 
 Type schemes are the polymorphic generalisations stored at
@@ -129,7 +129,7 @@ combineConstraints NumberConstraint NumberConstraint = Just NumberConstraint
 -- | The unification-friendly representation of a Quone type.
 --
 -- The 'TyDataframe' constructor is kept distinct from 'TyRecord' so
--- the dataframe-rejection rule from LANGUAGE2.md section 8.5 (record
+-- the dataframe-rejection rule from LANGUAGE.md section 8.5 (record
 -- update on a dataframe) can pattern-match without inspecting fields.
 data Type
     = TyVarT TyVar
@@ -174,7 +174,7 @@ primCharacter = TyCon "Character"
 primLogical = TyCon "Logical"
 
 
--- | Per LANGUAGE2.md section 8.8, comparison operators accept any of
+-- | Per LANGUAGE.md section 8.8, comparison operators accept any of
 -- the four built-in scalar types.
 isPrimComparable :: Type -> Prelude.Bool
 isPrimComparable t =
@@ -197,7 +197,7 @@ isPrimNumeric t = t Prelude.== primInteger Prelude.|| t Prelude.== primDouble
 
 -- | A type scheme is a (possibly empty) set of universally-quantified
 -- variables together with a body. Used at top-level bindings and at
--- generalised let positions per LANGUAGE2.md section 8.3.
+-- generalised let positions per LANGUAGE.md section 8.3.
 data Scheme = Scheme
     { schemeVars :: [TyVar]
     , schemeBody :: Type

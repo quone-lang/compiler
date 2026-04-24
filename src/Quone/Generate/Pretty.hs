@@ -120,7 +120,7 @@ namedCallR fn args =
         Prelude.<> ")"
 
 
--- | R's assignment operator (matches LANGUAGE2.md section 13.2.1).
+-- | R's assignment operator (matches LANGUAGE.md section 13.2.1).
 assign :: Text -> Text -> Text
 assign name body = name Prelude.<> " <- " Prelude.<> body
 

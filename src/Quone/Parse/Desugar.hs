@@ -1,6 +1,6 @@
 {-| Desugar the CST into the AST.
 
-Applies the surface-only desugarings from LANGUAGE2.md section 5.3:
+Applies the surface-only desugarings from LANGUAGE.md section 5.3:
 
 * @if e1 then e2 else e3@ ⇒ @case e1 of True -> e2; False -> e3@.
 

@@ -1,6 +1,6 @@
 {-| Structured compiler diagnostics.
 
-LANGUAGE2.md section 12.1 enumerates ten error categories that a
+LANGUAGE.md section 12.1 enumerates ten error categories that a
 conforming implementation MUST recognise. This module pins each
 category to a constructor of 'Category' so every compiler phase can
 emit diagnostics in a uniform shape and the test suite can assert on
@@ -26,7 +26,7 @@ import Quone.Position
 import qualified Prelude
 
 
--- | The ten error categories from LANGUAGE2.md section 12.1, plus a
+-- | The ten error categories from LANGUAGE.md section 12.1, plus a
 -- generic 'Internal' for compiler bugs.
 data Category
     = Lexical

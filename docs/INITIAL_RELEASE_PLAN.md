@@ -1,7 +1,7 @@
 # Quone Initial Release Plan
 
 This document defines the intended scope for the first usable Quone release.
-`LANGUAGE2.md` is the language specification; this file tracks release
+`LANGUAGE.md` is the language specification; this file tracks release
 packaging, tooling, and implementation priorities.
 
 ## Release Goal

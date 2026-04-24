@@ -1,6 +1,6 @@
 {-| Concrete syntax tree.
 
-The CST mirrors the EBNF grammar in LANGUAGE2.md section 5.1 closely.
+The CST mirrors the EBNF grammar in LANGUAGE.md section 5.1 closely.
 It still contains 'IfExpr' and other surface-only constructs from
 section 5.3 - those are removed by 'Quone.Parse.Desugar' on the way to
 the abstract syntax tree.
@@ -189,7 +189,7 @@ data CTypeAliasDecl = CTypeAliasDecl
 data CImportDecl
     = CQuoneImport SourceSpan [CUpperName] CImportSelection
     | -- | A foreign import @import [modifier] pkg.fn : Ty@. The modifier
-      -- (LANGUAGE2.md section 4.5) declares the function's R-runtime
+      -- (LANGUAGE.md section 4.5) declares the function's R-runtime
       -- 'CForeignClassification'; absent means 'CCOpaque'.
       CForeignImport SourceSpan CForeignClassification CForeignName CTypeSig
     deriving (Prelude.Show, Prelude.Eq)

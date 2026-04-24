@@ -1,6 +1,6 @@
 {-| The token type emitted by the lexer.
 
-Mirrors LANGUAGE2.md sections 3.3 (literals), 3.4 (keywords), and 3.5
+Mirrors LANGUAGE.md sections 3.3 (literals), 3.4 (keywords), and 3.5
 (operators / punctuation). Doc-comment groups produced by section 3.6
 are emitted as 'TDocBlock' tokens carrying their already-stripped
 text.
@@ -93,7 +93,7 @@ data Token
     deriving (Prelude.Show, Prelude.Eq)
 
 
--- | Reserved keywords from LANGUAGE2.md section 3.4.
+-- | Reserved keywords from LANGUAGE.md section 3.4.
 --
 -- Categorised in source order: framework keywords, dataframe DSL
 -- keywords (verbs and the @dataframe@ type former), then the modifier
@@ -133,7 +133,7 @@ data Keyword
     | KAs
     | KWhere
     | KCols
-    | -- Foreign-import classification modifiers (LANGUAGE2.md section 4.5)
+    | -- Foreign-import classification modifiers (LANGUAGE.md section 4.5)
       KElementwise
     | KReducer
     | -- Prelude-only declarations (compiler-supplied bindings, written

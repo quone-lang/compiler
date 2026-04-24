@@ -6,7 +6,7 @@ adjustment:
   * The 'Program' is marked @'programIsPrelude' = True@ after
     desugaring so that the validator does not reject the prelude's
     own @extern@ / @infix@ / @prefix@ declarations
-    (LANGUAGE2.md sections 4.5, 10).
+    (LANGUAGE.md sections 4.5, 10).
 
 The result of 'loadPrelude' is the typing environment that user-
 program inference seeds from. Today (Phase A) this env extends the
@@ -78,6 +78,6 @@ loadPrelude = do
 
 -- | Every value-level name the prelude introduces. Useful for any
 -- pass that builds a per-module symbol table and wants to treat
--- prelude names as implicitly-imported (LANGUAGE2.md section 10).
+-- prelude names as implicitly-imported (LANGUAGE.md section 10).
 preludeNames :: LoadedPrelude -> Set.Set Text
 preludeNames p = Map.keysSet (envValues (preludeEnv p))

@@ -3,7 +3,7 @@
 Every token, AST node, and diagnostic carries a 'SourceSpan' so the
 compiler can point at the offending character range.
 
-LANGUAGE2.md section 16 requires every error to include the source
+LANGUAGE.md section 16 requires every error to include the source
 location of the offence; that promise lives in this module.
 -}
 module Quone.Position

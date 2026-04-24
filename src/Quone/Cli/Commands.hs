@@ -121,7 +121,7 @@ cmdCompileDir fmt outDir dir = do
 -- | Format a .Q file in place.
 --
 -- Wraps the elm-format-style formatter in 'Quone.Format.Format'. See
--- LANGUAGE2.md section 3.2.1 (naming conventions) and the planned
+-- LANGUAGE.md section 3.2.1 (naming conventions) and the planned
 -- canonical layout rules described in the project plan.
 cmdFmt :: Prelude.FilePath -> Prelude.IO Exit.ExitCode
 cmdFmt path = do

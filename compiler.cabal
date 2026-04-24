@@ -4,7 +4,7 @@ version:       0.0.1
 synopsis:      The Quone language compiler.
 description:
     The Quone language compiler. Implements the initial release specified
-    by docs/LANGUAGE2.md: lexer, parser, AST, name resolution,
+    by docs/LANGUAGE.md: lexer, parser, AST, name resolution,
     type checking, dataframe verb typing, CSV decoding, formatting,
     LSP support, and readable R code generation.
 license:       MIT

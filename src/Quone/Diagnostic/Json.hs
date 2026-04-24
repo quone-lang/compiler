@@ -112,7 +112,7 @@ jsonInt n = T.pack (Prelude.show (Prelude.fromIntegral n :: Prelude.Int))
 
 -- | Encode a JSON string with the standard escapes from RFC 8259.
 -- Non-ASCII characters are passed through verbatim because the
--- compiler only emits UTF-8 (LANGUAGE2.md section 3.1) and consumers
+-- compiler only emits UTF-8 (LANGUAGE.md section 3.1) and consumers
 -- handle UTF-8 input.
 jsonString :: Text -> Text
 jsonString s = "\"" ++ T.concatMap escapeChar s ++ "\""

@@ -1,6 +1,6 @@
 {-| Abstract syntax tree.
 
-This module defines the AST exactly as specified in LANGUAGE2.md
+This module defines the AST exactly as specified in LANGUAGE.md
 section 6, with the desugarings from section 5.3 already applied. In
 particular:
 
@@ -13,7 +13,7 @@ Every node carries a 'SourceSpan' so diagnostics from later phases
 (typing, lowering) can still point at the original source range.
 
 The 'Verb' enum lists every reserved dataframe verb from
-LANGUAGE2.md section 3.4, even those whose typing rules are still
+LANGUAGE.md section 3.4, even those whose typing rules are still
 @[planned]@; the parser already accepts them and the AST tracks the
 shape so future revisions can add typing without breaking the AST.
 
@@ -226,7 +226,7 @@ data ImportDecl
     = QuoneImport SourceSpan ModulePath ImportSelection
     | -- | A foreign-import declaration. The 'ForeignClassification'
       -- carries the (optional) @elementwise@/@reducer@ modifier from
-      -- LANGUAGE2.md section 4.5; it determines whether the imported
+      -- LANGUAGE.md section 4.5; it determines whether the imported
       -- name may appear in a dataframe verb right-hand side.
       ForeignImport SourceSpan ForeignClassification ForeignName TypeSig
     deriving (Prelude.Show, Prelude.Eq)
@@ -291,7 +291,7 @@ data ValueDecl = ValueDecl
     deriving (Prelude.Show, Prelude.Eq)
 
 
--- | Prelude-only @extern@ declaration (LANGUAGE2.md sections 8.2 and
+-- | Prelude-only @extern@ declaration (LANGUAGE.md sections 8.2 and
 -- 10). Either a value binding with a compiler-supplied R callable, or
 -- a primitive type with no source-language constructors.
 data ExternDecl

@@ -2,7 +2,7 @@
 
 For each module in a project we build a 'ModuleSymbols' table, then
 verify imports against the source module's exports
-(LANGUAGE2.md section 4.5).
+(LANGUAGE.md section 4.5).
 
 For initial release the resolver focuses on the rules that need cross-module
 information; intra-module name use is left to the typer (it already
@@ -224,7 +224,7 @@ selectionItems = \case
 -- ---------------------------------------------------------------------
 
 
--- | Validate the parts of LANGUAGE2.md section 4.5 a single module can
+-- | Validate the parts of LANGUAGE.md section 4.5 a single module can
 -- check on its own. For initial release that is:
 --
 -- * the foreign-import path is non-empty (parser already enforces);

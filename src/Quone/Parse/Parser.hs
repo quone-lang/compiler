@@ -2,7 +2,7 @@
 
 Consumes the token stream produced by 'Quone.Lex.Lexer' and produces a
 'CProgram'. The grammar implemented here is exactly the EBNF in
-LANGUAGE2.md section 5.1, including:
+LANGUAGE.md section 5.1, including:
 
 * operator precedence and associativity from section 5.2 (right-assoc
   exponent, tight unary minus, left-assoc everything else),
@@ -351,7 +351,7 @@ pProgram = do
     skipLayout
     -- A doc block immediately preceding `module ...` documents the
     -- module itself. We accept it for ergonomics but don't yet wire
-    -- it to anywhere; per LANGUAGE2.md section 14.6 module-level doc
+    -- it to anywhere; per LANGUAGE.md section 14.6 module-level doc
     -- is `[planned]`. Discarding for initial release keeps idiomatic R-package
     -- file headers (one-line summary above `module`) round-trippable.
     _ <- optional_ (try_ expectDocBlock)
@@ -1103,7 +1103,7 @@ pExpr :: P CExpr
 pExpr = pPipe
 
 
--- Precedence ladder per LANGUAGE2.md section 5.2 (low to high binding):
+-- Precedence ladder per LANGUAGE.md section 5.2 (low to high binding):
 -- 1 pipe |>
 -- 2 comparison
 -- 3 additive + -
@@ -1117,7 +1117,7 @@ pExpr = pPipe
 pPipe :: P CExpr
 pPipe = do
     left <- pCmp
-    -- Multi-line pipelines are common (LANGUAGE2.md section 9.1's
+    -- Multi-line pipelines are common (LANGUAGE.md section 9.1's
     -- examples), so we DO allow `|>` continuations across lines.
     -- Per-iteration we still bail when the next significant token is
     -- not `|>`, which keeps the next top-level decl from being eaten.

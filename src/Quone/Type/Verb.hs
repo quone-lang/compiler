@@ -1,6 +1,6 @@
 {-| Dataframe verb typing.
 
-Implements LANGUAGE2.md section 8.7's typing rules for the six verbs
+Implements LANGUAGE.md section 8.7's typing rules for the six verbs
 that are normative in initial release: 'VSelect', 'VFilter', 'VMutate',
 'VSummarize', 'VGroupBy', 'VArrange'. The remaining verbs reserved in
 section 3.4 are accepted by the parser (they typecheck as @Dataframe a
@@ -196,7 +196,7 @@ typeSummarize
     -> Prelude.Either Diagnostic (Map.Map Text Type)
 typeSummarize infer env sp schema args = do
     fields <- argRecordBindings sp args
-    -- summarize uses group scope per LANGUAGE2.md section 9.3: each
+    -- summarize uses group scope per LANGUAGE.md section 9.3: each
     -- column is visible as the full Vector being aggregated (so a
     -- caller can write `mean score` where mean : Vector Double ->
     -- Double). The summary value is a scalar (element type); we
@@ -509,13 +509,13 @@ dplyrArgExpr = \case
 -- ---------------------------------------------------------------------
 
 
--- | Row scope (LANGUAGE2.md section 9.3): each column is bound as a
+-- | Row scope (LANGUAGE.md section 9.3): each column is bound as a
 -- single element. Used by @filter@, @mutate@, @group_by@, @arrange@.
 --
 -- The schema stores the per-column element type (`Double` for a
 -- column of doubles, not `Vector Double`); row scope binds it
 -- directly. Columns are also classified as 'Elementwise' so that
--- the verb-rhs classification check (LANGUAGE2.md section 8.7)
+-- the verb-rhs classification check (LANGUAGE.md section 8.7)
 -- treats column references as data — not as opaque callables —
 -- when walking the right-hand side of e.g. @mutate { x = col + 1 }@.
 bindColumns :: Env -> Map.Map Text Type -> Env
@@ -577,7 +577,7 @@ wrapVector = \case
 -- | Statically approximate the R-runtime 'Classification' of an
 -- expression. Used by the verb typer to reject right-hand sides whose
 -- callees do not match the verb's expected vectorisation pattern (per
--- LANGUAGE2.md sections 8.7 and 9.2).
+-- LANGUAGE.md sections 8.7 and 9.2).
 --
 -- The walk is conservative:
 --
@@ -591,7 +591,7 @@ wrapVector = \case
 --     poisons the result;
 --   * 'EBinOp' and 'EUnary' are 'Elementwise' regardless of operand
 --     classification — every operator has only elementwise
---     monomorphic instances (LANGUAGE2.md section 8.8) — but their
+--     monomorphic instances (LANGUAGE.md section 8.8) — but their
 --     operands' classifications still contribute via the meet so that
 --     e.g. @sqrt opaque@ is not laundered to elementwise just by
 --     wrapping it in @+@;
@@ -685,7 +685,7 @@ firstCalleeWith env target = go
 
 -- | Validate a @summarize@ right-hand side.
 --
--- Per LANGUAGE2.md section 9.3, @summarize { col = expr }@ runs @expr@
+-- Per LANGUAGE.md section 9.3, @summarize { col = expr }@ runs @expr@
 -- in group scope where each column is bound as the full @Vector@ of
 -- values. The expression must produce a single scalar per group, so
 -- columns must appear inside a 'Reducer' call (e.g. @mean(col)@,
@@ -803,7 +803,7 @@ firstJustList = Prelude.foldr firstJust Nothing
 
 
 -- | Reject a @mutate@ or @filter@ right-hand side whose classification
--- isn't 'Elementwise'. Per LANGUAGE2.md section 8.7, these verbs map
+-- isn't 'Elementwise'. Per LANGUAGE.md section 8.7, these verbs map
 -- per-row in R, so any 'Reducer' (which expects the full vector) or
 -- 'Opaque' callable (whose vectorisation is unknown) is unsafe.
 checkRowwiseRhs
@@ -824,7 +824,7 @@ checkRowwiseRhs env sp verbName rhs = case classifyExpr env rhs of
         Prelude.Left
             ( verbClassificationError sp verbName
                 (firstOpaqueCallee env rhs)
-                "is not classified as elementwise; declare its foreign import as `import elementwise pkg.fn : ...` (LANGUAGE2.md section 4.5) or refactor to use only elementwise primitives"
+                "is not classified as elementwise; declare its foreign import as `import elementwise pkg.fn : ...` (LANGUAGE.md section 4.5) or refactor to use only elementwise primitives"
             )
 
 
@@ -848,7 +848,7 @@ checkSummarizeRhs env schema sp rhs = case summarizeOk env schema rhs of
                     then
                         " is a column; in summarize each column must appear inside a reducer like `mean(" Prelude.<> offendingText Prelude.<> ")` or `sum(" Prelude.<> offendingText Prelude.<> ")`"
                     else
-                        " is not classified as elementwise; declare its foreign import as `import elementwise pkg.fn : ...` (LANGUAGE2.md section 4.5)"
+                        " is not classified as elementwise; declare its foreign import as `import elementwise pkg.fn : ...` (LANGUAGE.md section 4.5)"
         in
         Prelude.Left
             ( verbClassificationError sp "summarize"
@@ -909,7 +909,7 @@ typeMismatch sp msg =
         }
 
 
--- | Diagnostic for a verb-rhs classification mismatch (LANGUAGE2.md
+-- | Diagnostic for a verb-rhs classification mismatch (LANGUAGE.md
 -- section 8.7). Names the offending callee where possible so the
 -- user can find what to fix.
 verbClassificationError

@@ -1,6 +1,6 @@
 {-| AST well-formedness validation.
 
-Enforces the nine invariants from LANGUAGE2.md section 6.8:
+Enforces the nine invariants from LANGUAGE.md section 6.8:
 
 1.  Module placement (only one module declaration; no inner one).
 2.  Export consistency (every name in @exporting (..)@ is defined).
@@ -219,7 +219,7 @@ hasExportTag (Just block) =
 
 -- ---------------------------------------------------------------------
 -- Invariant: `extern` / `infix` / `prefix` are reserved for the
--- embedded prelude (LANGUAGE2.md sections 4.5 and 10).
+-- embedded prelude (LANGUAGE.md sections 4.5 and 10).
 -- ---------------------------------------------------------------------
 
 
@@ -256,7 +256,7 @@ preludeOnlyDiag = \case
                         Prelude.<> kind
                         Prelude.<> "` declarations are reserved for the embedded prelude"
                 , diagHint =
-                    Just "use `import pkg.fn : ...` to bind a foreign R function in user code (LANGUAGE2.md section 4.5)"
+                    Just "use `import pkg.fn : ...` to bind a foreign R function in user code (LANGUAGE.md section 4.5)"
                 }
             )
     DInfix d ->

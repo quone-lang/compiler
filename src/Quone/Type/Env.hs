@@ -1,6 +1,6 @@
 {-| Initial typing environment.
 
-Provides the prelude bindings listed in LANGUAGE2.md section 8.2 plus
+Provides the prelude bindings listed in LANGUAGE.md section 8.2 plus
 the built-in 'Logical' constructors from section 7.5.1.
 
 The full prelude module surface is `[planned]` per section 19.5; for
@@ -16,12 +16,12 @@ module Quone.Type.Env
     , insertType
     , insertConstructor
     , lookupConstructor
-      -- * Classification (LANGUAGE2.md sections 4.5, 8.7)
+      -- * Classification (LANGUAGE.md sections 4.5, 8.7)
     , Classification (..)
     , insertClassification
     , lookupClassification
     , classificationMeet
-      -- * Operator overloads (LANGUAGE2.md section 8.8)
+      -- * Operator overloads (LANGUAGE.md section 8.8)
     , OperatorOverload (..)
     , insertOperatorOverload
     , lookupOperatorOverloads
@@ -57,10 +57,10 @@ import qualified Prelude
 --   * @envClassifications@: per-name R-runtime 'Classification', kept
 --     parallel to @envValues@ so dataframe verbs can reject right-
 --     hand sides that would silently break R's vectorisation rules
---     (LANGUAGE2.md sections 4.5, 8.7);
+--     (LANGUAGE.md sections 4.5, 8.7);
 --   * @envOperatorOverloads@: per-'BinOp' list of typing rules read
 --     from the prelude's @infix@ declarations
---     (LANGUAGE2.md section 8.8);
+--     (LANGUAGE.md section 8.8);
 --   * @envUnaryOverloads@: per-'UnaryOp' list of typing rules read
 --     from the prelude's @prefix@ declarations.
 data Env = Env
@@ -95,7 +95,7 @@ data Classification
 
 
 -- | One overload of a binary operator, declared by an @infix@
--- declaration in the prelude (LANGUAGE2.md section 8.8).
+-- declaration in the prelude (LANGUAGE.md section 8.8).
 --
 -- Each overload pins concrete operand and result types. The dispatch
 -- algorithm in 'Quone.Type.Infer' tries the overloads in declaration
@@ -199,7 +199,7 @@ insertClassification name c env =
 
 
 -- | Classification for @name@; defaults to 'Opaque' if no entry has
--- been registered (per LANGUAGE2.md section 4.5: foreign imports
+-- been registered (per LANGUAGE.md section 4.5: foreign imports
 -- without an @elementwise@/@reducer@ modifier are opaque, and any
 -- name the type checker has not classified is treated the same way).
 lookupClassification :: Text -> Env -> Classification

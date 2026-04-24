@@ -1,6 +1,6 @@
 {-| R code generation.
 
-Implements LANGUAGE2.md section 13: maps each AST node to its R
+Implements LANGUAGE.md section 13: maps each AST node to its R
 counterpart. Highlights:
 
 * primitive mapping per section 13.2 ('Integer' -> @1L@,
@@ -52,10 +52,10 @@ import qualified Prelude
 -- | Codegen-time context. For initial release it carries:
 --
 --   * @gePkgQualifiers@: a foreign-import map from local name to its
---     fully-qualified R form @pkg::fn@ (LANGUAGE2.md section 13.9);
+--     fully-qualified R form @pkg::fn@ (LANGUAGE.md section 13.9);
 --   * @geExternBodies@: per-name R-callable string supplied by an
 --     @extern@ declaration in the embedded prelude
---     (LANGUAGE2.md section 10). Looked up by 'EApp' lowering to
+--     (LANGUAGE.md section 10). Looked up by 'EApp' lowering to
 --     replace the Quone name with the declared R form;
 --   * @geOperatorR@: per-'BinOp' R operator string supplied by the
 --     prelude's @infix@ declarations. All overloads of a given
@@ -88,7 +88,7 @@ emptyGenEnv =
 
 -- | Walk every foreign-import declaration and build the qualifier map.
 -- Also seed the extern-body map from the embedded prelude
--- (LANGUAGE2.md section 10) so calls to @sqrt@, @mean@, @if_else@,
+-- (LANGUAGE.md section 10) so calls to @sqrt@, @mean@, @if_else@,
 -- etc. lower to the R callable strings declared in @Prelude.Q@.
 --
 -- @import readr.read_csv : ...@ ⇒ @\"read_csv\" -> \"readr::read_csv\"@.
@@ -380,7 +380,7 @@ generateExpr = generateExprIn emptyGenEnv
 
 
 -- | Generate an expression with a known generator environment. Foreign
--- imports map to qualified @pkg::fn@ calls per LANGUAGE2.md
+-- imports map to qualified @pkg::fn@ calls per LANGUAGE.md
 -- section 13.9.
 generateExprIn :: GenEnv -> Expr -> Text
 generateExprIn env = \case
@@ -433,7 +433,7 @@ generateExprIn env = \case
                   -- The callee was declared in the prelude as an
                   -- `extern` value: look up its R body and emit
                   -- `<r>(args...)`. Replaces the legacy if_else
-                  -- special case (LANGUAGE2.md sections 10, 8.7).
+                  -- special case (LANGUAGE.md sections 10, 8.7).
                   externCall env body args
             EVar n ->
                 -- Foreign imports of `purrr::*` family functions
@@ -992,7 +992,7 @@ lowerCase env scrut arms
         chainShape env scrut arms
 
 
--- | LANGUAGE2.md section 13.6: when a case has exactly two arms
+-- | LANGUAGE.md section 13.6: when a case has exactly two arms
 -- 'True' -> a and 'False' -> b (in either order), lower to R's
 -- native 'if'. This is the optimisation that the section 5.3
 -- if-desugaring relies on so ordinary 'if' compiles to ordinary R 'if'.

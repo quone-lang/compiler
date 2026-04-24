@@ -1,6 +1,6 @@
 {-| A tiny test harness used by the compiler test suite.
 
-Per LANGUAGE2.md section 16, every normative rule needs at least one
+Per LANGUAGE.md section 16, every normative rule needs at least one
 test. We use a local harness rather than a third-party framework so
 the test names track the spec sections directly (section 16.14) and
 the runner has no dependencies beyond what the compiler already uses.

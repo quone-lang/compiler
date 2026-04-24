@@ -4,13 +4,13 @@ A Quone project is:
 
 * a directory containing a `quone.toml`;
 * a `src/` subtree of @.Q@ files whose paths mirror their module
-  paths (LANGUAGE2.md section 14.6);
-* zero or more named R-package dependencies (LANGUAGE2.md section 13.9).
+  paths (LANGUAGE.md section 14.6);
+* zero or more named R-package dependencies (LANGUAGE.md section 13.9).
 
 For initial release we keep the `quone.toml` schema small and parse it with a
 hand-rolled key/value parser. A richer schema (with semver constraints,
 optional sections, etc.) is `[planned]` per
-[section 19.7](LANGUAGE2.md#197-tooling).
+[section 19.7](LANGUAGE.md#197-tooling).
 
 The supported schema:
 

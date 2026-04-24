@@ -23,7 +23,7 @@ from R:
 install.packages("pak")
 pak::pak("quone-lang/quone")
 quone::install_compiler()
-quone::install_lsp("code")    # or "cursor" / "positron"
+quone::install_lsp()
 ```
 
 Or download a release binary directly from
@@ -58,10 +58,9 @@ the extension and writes `quone.compilerPath` into that editor's user settings.
 
 ## Working with Cursor and Positron
 
-Cursor and Positron use the same extension format as VS Code. Either
-install the published `.vsix` directly or run
-`quone::install_lsp("cursor")` / `quone::install_lsp("positron")` from
-R.
+Cursor and Positron use the same extension format as VS Code. Either install
+the published `.vsix` directly or run `quone::install_lsp()` from R and let it
+choose the first available editor CLI.
 
 ## License
 

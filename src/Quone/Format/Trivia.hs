@@ -3,7 +3,7 @@
 The CST in 'Quone.Parse.Cst' tracks doc blocks (via 'CDocBlock') so
 those round-trip through the formatter. Block comments and trailing
 inline @#@ comments are dropped in initial release; full trivia preservation
-(see LANGUAGE2.md section 19.7) requires extending the lexer to
+(see LANGUAGE.md section 19.7) requires extending the lexer to
 attach trivia tokens and threading them through the CST. Promoted
 to future release.
 

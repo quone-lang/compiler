@@ -1,6 +1,6 @@
 {-| Lexer for Quone source files.
 
-Implements LANGUAGE2.md section 3 in full:
+Implements LANGUAGE.md section 3 in full:
 
 * identifiers (3.2): ASCII letter start, no leading @_@, @.@ reserved
   for field access;
@@ -173,7 +173,7 @@ oneToken filename =
 
 -- | A lone `_` lexes as the wildcard token (used in patterns). Any
 -- other identifier-like token starting with `_` falls through to
--- 'identOrKeyword', which rejects it per LANGUAGE2.md section 3.2.
+-- 'identOrKeyword', which rejects it per LANGUAGE.md section 3.2.
 wildcardOrIdent :: Text -> Lexer (Located Token)
 wildcardOrIdent filename =
     located filename <| do
@@ -344,7 +344,7 @@ punctuation filename =
 -- | String literal with escape support (M3.1).
 --
 -- Recognised escape sequences (matching R's own string-literal rules
--- and the LANGUAGE2.md section 3.3 update):
+-- and the LANGUAGE.md section 3.3 update):
 --
 --   * @\\n@    newline
 --   * @\\t@    tab
@@ -393,7 +393,7 @@ stringChar = (escape P.<|> plain) P.<?> "string character"
                     )
 
 
--- | Numeric literal. Per LANGUAGE2.md section 3.3, Quone follows R's
+-- | Numeric literal. Per LANGUAGE.md section 3.3, Quone follows R's
 -- convention:
 --
 -- * @1@      lexes as 'TFloatLit' (Double). Bare digit runs are doubles
@@ -456,7 +456,7 @@ numericLiteral filename =
 
 
 -- | An identifier is a letter followed by letters, digits, and @_@.
--- Per LANGUAGE2.md section 3.2 a leading @_@ is not permitted (R does
+-- Per LANGUAGE.md section 3.2 a leading @_@ is not permitted (R does
 -- not allow it).
 identOrKeyword :: Text -> Lexer (Located Token)
 identOrKeyword filename =
@@ -567,7 +567,7 @@ lexErrorToDiagnostic filename bundle =
 'TDedent' tokens.
 
 The rule is simple and intentionally conservative for initial release
-(LANGUAGE2.md sections 3.7 and 19.1):
+(LANGUAGE.md sections 3.7 and 19.1):
 
 * Blank lines are skipped.
 * When a line's indent is greater than the top of the indent stack we
