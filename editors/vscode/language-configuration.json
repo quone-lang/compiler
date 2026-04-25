@@ -21,6 +21,7 @@
   ],
   "indentationRules": {
     "increaseIndentPattern": "^.*(<-|->|of|in|exporting|then|else)\\s*$",
-    "decreaseIndentPattern": "^\\s*[)\\]}].*$"
+    "decreaseIndentPattern": "^\\s*[)\\]}].*$",
+    "unIndentedLinePattern": "^\\s*$"
   }
 }
