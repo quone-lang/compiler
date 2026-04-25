@@ -211,13 +211,7 @@ byPrefix p =
 
 renderScheme :: Ty.Scheme -> Text
 renderScheme s =
-    let
-        body = renderType (Ty.schemeBody s)
-        vs = Ty.schemeVars s
-    in
-    case vs of
-        [] -> body
-        _ -> "forall " ++ T.intercalate " " (Prelude.fmap tyVarName vs) ++ ". " ++ body
+    renderType (Ty.schemeBody s)
 
 
 tyVarName :: Ty.TyVar -> Text
@@ -240,7 +234,7 @@ renderTypePrec prec = \case
         if prec Prelude.> 10 then "(" ++ inner ++ ")" else inner
     Ty.TyFun a b ->
         let
-            inner = renderTypePrec 11 a ++ " -> " ++ renderTypePrec 0 b
+            inner = renderTypePrec 1 a ++ " -> " ++ renderTypePrec 0 b
         in
         if prec Prelude.> 0 then "(" ++ inner ++ ")" else inner
     Ty.TyRecord fs -> "{ " ++ renderRecord fs ++ " }"

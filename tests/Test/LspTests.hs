@@ -130,7 +130,7 @@ hoverShowsPreludeDocs =
             Handlers.handleHover hoverParams state
     in
     case Json.lookupField "contents" hover of
-        Just (Json.VArray [signature, Json.VString doc]) ->
+        Just (Json.VArray [Json.VString doc, signature]) ->
             let
                 language =
                     Json.lookupField "language" signature
@@ -141,7 +141,7 @@ hoverShowsPreludeDocs =
                         Prelude.>>= Json.asString
             in
             if language Prelude.== Just "quone"
-                && value Prelude.== Just "mean : (Vector Double) -> Double"
+                && value Prelude.== Just "mean : Vector Double -> Double"
                 && "Arithmetic mean." `T.isInfixOf` doc
             then
                 Pass
@@ -192,12 +192,12 @@ hoverRendersTypeVariablesReadably =
             Handlers.handleHover hoverParams state
     in
     case Json.lookupField "contents" hover of
-        Just (Json.VArray [signature, _]) ->
+        Just (Json.VArray [_, signature]) ->
             case Json.lookupField "value" signature Prelude.>>= Json.asString of
                 Just value ->
                     if "TyVar" `T.isInfixOf` value then
                         Fail ("hover leaked internal TyVar: " ++ value)
-                    else if value Prelude.== "map : forall b a. (a -> b) -> (Vector a) -> Vector b" then
+                    else if value Prelude.== "map : (a -> b) -> Vector a -> Vector b" then
                         Pass
                     else
                         Fail ("unexpected map hover: " ++ value)

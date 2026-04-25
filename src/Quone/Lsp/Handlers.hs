@@ -307,8 +307,8 @@ hoverContents sym =
         [] -> sigBlock
         doc ->
             Json.VArray
-                [ sigBlock
-                , Json.str (T.intercalate "\n" doc)
+                [ Json.str (T.intercalate "\n" doc)
+                , sigBlock
                 ]
 
 
