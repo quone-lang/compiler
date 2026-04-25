@@ -434,19 +434,26 @@ numericLiteral filename =
                         (P.ErrorFail
                             "an integer literal (suffix `L`) cannot have a fractional part"))
             (Just frac, Nothing) ->
+                let
+                    raw = intPart Prelude.<> frac
+                in
                 Prelude.pure
                     (TFloatLit
                         (Prelude.read
-                            (T.unpack (intPart Prelude.<> frac))
-                            :: Prelude.Double))
+                            (T.unpack raw)
+                            :: Prelude.Double)
+                        raw)
             (Nothing, Just _) ->
                 Prelude.pure
-                    (TIntLit (Prelude.read (T.unpack intPart) :: Int))
+                    (TIntLit
+                        (Prelude.read (T.unpack intPart) :: Int)
+                        (intPart Prelude.<> "L"))
             (Nothing, Nothing) ->
                 Prelude.pure
                     (TFloatLit
                         (Prelude.read (T.unpack intPart)
-                            :: Prelude.Double))
+                            :: Prelude.Double)
+                        intPart)
 
 
 

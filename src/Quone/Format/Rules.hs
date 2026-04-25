@@ -656,8 +656,8 @@ formatExprAtomic expr = case expr of
 
 formatLiteral :: CLiteral -> Doc
 formatLiteral = \case
-    CLInt n -> text (T.pack (Prelude.show n))
-    CLDouble d -> text (T.pack (Prelude.show d))
+    CLInt _ raw -> text raw
+    CLDouble _ raw -> text raw
     CLChar t -> text "\"" <> text (escape t) <> text "\""
   where
     escape = T.replace "\"" "\\\"" Prelude.. T.replace "\\" "\\\\"

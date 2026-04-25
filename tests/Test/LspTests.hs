@@ -428,7 +428,7 @@ formattingReplacesFinalLineWithoutTrailingNewline =
             in
             if mEndLine Prelude.== Just 0
                 && mEndCharacter Prelude.== Just (Prelude.fromIntegral (T.length src))
-                && mNewText Prelude.== Just "answer <- 42.0\n"
+                && mNewText Prelude.== Just "answer <- 42\n"
             then
                 Pass
             else

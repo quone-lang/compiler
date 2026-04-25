@@ -325,21 +325,21 @@ expectStringLit = P <| \s ->
 
 
 -- | Match an integer literal.
-expectIntLit :: P (SourceSpan, Int)
+expectIntLit :: P (SourceSpan, Int, Text)
 expectIntLit = P <| \s ->
     case dropLayout (stateTokens s) of
-        (Located {locValue = TIntLit n, locSpan = sp} : rest) ->
-            POk (sp, n) (s {stateTokens = rest})
+        (Located {locValue = TIntLit n raw, locSpan = sp} : rest) ->
+            POk (sp, n, raw) (s {stateTokens = rest})
         toks ->
             PErr (expectedDiag (stateFile s) "integer literal" toks)
 
 
 -- | Match a floating literal.
-expectFloatLit :: P (SourceSpan, Prelude.Double)
+expectFloatLit :: P (SourceSpan, Prelude.Double, Text)
 expectFloatLit = P <| \s ->
     case dropLayout (stateTokens s) of
-        (Located {locValue = TFloatLit n, locSpan = sp} : rest) ->
-            POk (sp, n) (s {stateTokens = rest})
+        (Located {locValue = TFloatLit n raw, locSpan = sp} : rest) ->
+            POk (sp, n, raw) (s {stateTokens = rest})
         toks ->
             PErr (expectedDiag (stateFile s) "double literal" toks)
 
@@ -868,9 +868,9 @@ pInfixDecl mDoc = do
 pPrecedence :: P Int
 pPrecedence = P <| \s ->
     case dropLayout (stateTokens s) of
-        (Located {locValue = TIntLit n} : rest) ->
+        (Located {locValue = TIntLit n _} : rest) ->
             POk n (s {stateTokens = rest})
-        (Located {locValue = TFloatLit n} : rest) ->
+        (Located {locValue = TFloatLit n _} : rest) ->
             POk (Prelude.floor n) (s {stateTokens = rest})
         toks ->
             PErr (expectedDiag (stateFile s) "precedence integer" toks)
@@ -1316,10 +1316,12 @@ pPrimary :: P CExpr
 pPrimary = do
     nextSig <- peekSig
     case locValue nextSig of
-        TIntLit n ->
-            (\(sp, _) -> CELit sp (CLInt n)) <$> expectIntLit
-        TFloatLit f ->
-            (\(sp, _) -> CELit sp (CLDouble f)) <$> expectFloatLit
+        TIntLit _ _ -> do
+            (sp, n, raw) <- expectIntLit
+            Prelude.pure (CELit sp (CLInt n raw))
+        TFloatLit _ _ -> do
+            (sp, n, raw) <- expectFloatLit
+            Prelude.pure (CELit sp (CLDouble n raw))
         TStringLit s ->
             (\(sp, t) -> CELit sp (CLChar t)) <$> expectStringLit
         TLowerIdent _ -> CEVar <$> expectLowerIdent
@@ -1656,12 +1658,12 @@ pPattern = do
         TLowerIdent _ -> do
             n <- expectLowerIdent
             Prelude.pure (CPVar n)
-        TIntLit n -> do
-            (sp, _) <- expectIntLit
-            Prelude.pure (CPLit sp (CLInt n))
-        TFloatLit f -> do
-            (sp, _) <- expectFloatLit
-            Prelude.pure (CPLit sp (CLDouble f))
+        TIntLit _ _ -> do
+            (sp, n, raw) <- expectIntLit
+            Prelude.pure (CPLit sp (CLInt n raw))
+        TFloatLit _ _ -> do
+            (sp, n, raw) <- expectFloatLit
+            Prelude.pure (CPLit sp (CLDouble n raw))
         TStringLit _ -> do
             (sp, t) <- expectStringLit
             Prelude.pure (CPLit sp (CLChar t))

@@ -498,7 +498,7 @@ data CRecordPatField
 
 
 data CLiteral
-    = CLInt Int
-    | CLDouble Prelude.Double
+    = CLInt Int Text
+    | CLDouble Prelude.Double Text
     | CLChar Text
     deriving (Prelude.Show, Prelude.Eq)

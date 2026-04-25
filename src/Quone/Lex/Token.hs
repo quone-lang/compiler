@@ -44,8 +44,8 @@ data Token
     | TUpperIdent Text
     | TKeyword Keyword
     | -- Literals
-      TIntLit Int
-    | TFloatLit Prelude.Double
+      TIntLit Int Text
+    | TFloatLit Prelude.Double Text
     | TStringLit Text
     | -- Operators
       TArrow         -- ->
@@ -228,8 +228,8 @@ showToken = \case
     TLowerIdent t -> "identifier " ++ T.pack (Prelude.show t)
     TUpperIdent t -> "type name " ++ T.pack (Prelude.show t)
     TKeyword k -> "keyword " ++ T.pack (Prelude.show (keywordText k))
-    TIntLit n -> "integer literal " ++ T.pack (Prelude.show n)
-    TFloatLit n -> "double literal " ++ T.pack (Prelude.show (n :: Prelude.Double))
+    TIntLit _ raw -> "integer literal " ++ T.pack (Prelude.show raw)
+    TFloatLit _ raw -> "double literal " ++ T.pack (Prelude.show raw)
     TStringLit s -> "string literal " ++ T.pack (Prelude.show s)
     TArrow -> "'->'"
     TBind -> "'<-'"

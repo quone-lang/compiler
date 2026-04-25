@@ -367,8 +367,8 @@ dExpr = \case
 
 dLiteral :: C.CLiteral -> Literal
 dLiteral = \case
-    C.CLInt n -> LInt n
-    C.CLDouble d -> LDouble d
+    C.CLInt n _ -> LInt n
+    C.CLDouble d _ -> LDouble d
     C.CLChar t -> LChar t
 
 

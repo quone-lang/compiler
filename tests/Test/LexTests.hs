@@ -46,7 +46,7 @@ suite =
                     === [ TDocBlock "hello"
                         , TLowerIdent "x"
                         , TBind
-                        , TFloatLit 1.0
+                        , TFloatLit 1.0 "1"
                         , TEof
                         ]
                 )

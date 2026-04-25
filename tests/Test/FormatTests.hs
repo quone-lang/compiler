@@ -15,40 +15,46 @@ suite =
             Prelude.pure
                 ( assertFormatted
                     "x<-1+2"
-                    "x <- 1.0 + 2.0\n"
+                    "x <- 1 + 2\n"
                 )
         , Harness.test "format/is_formatted_matches_elm_format_check" <|
             Prelude.pure
                 ( if Format.isFormatted "<test>" "x<-1+2" then
                     Fail "unformatted source was reported as formatted"
-                  else if Prelude.not (Format.isFormatted "<test>" "x <- 1.0 + 2.0\n") then
+                  else if Prelude.not (Format.isFormatted "<test>" "x <- 1 + 2\n") then
                     Fail "canonical source was reported as unformatted"
                   else
                     Pass
+                )
+        , Harness.test "format/preserves_numeric_literal_spelling" <|
+            Prelude.pure
+                ( assertFormatted
+                    "x <- 1\ny <- 1L"
+                    "x <- 1\n\ny <- 1L\n"
                 )
         , Harness.test "format/preserves_top_of_file_comment" <|
             Prelude.pure
                 ( assertFormatted
                     "# keep me\nx <- 1"
-                    "# keep me\nx <- 1.0\n"
+                    "# keep me\nx <- 1\n"
                 )
         , Harness.test "format/preserves_top_of_file_doc_comment" <|
             Prelude.pure
                 ( assertFormatted
                     "#' Hello\n#'\nx <- 1"
-                    "#' Hello\n#'\nx <- 1.0\n"
+                    "#' Hello\n#'\nx <- 1\n"
                 )
         , Harness.test "format/preserves_between_decl_comment" <|
             Prelude.pure
                 ( assertFormatted
                     (T.unlines ["x<-1", "# explain y", "y<-2"])
-                    (T.unlines ["x <- 1.0", "", "# explain y", "y <- 2.0"])
+                    (T.unlines ["x <- 1", "", "# explain y", "y <- 2"])
                 )
         , Harness.test "format/short_record_literal_stays_inline" <|
             Prelude.pure
                 ( assertFormatted
                     "row<-{a=1,b=2}"
-                    "row <- { a = 1.0, b = 2.0 }\n"
+                    "row <- { a = 1, b = 2 }\n"
                 )
         , Harness.test "format/preserves_foreign_import_alias_and_via" <|
             Prelude.pure
@@ -82,7 +88,7 @@ suite =
                     ( T.unlines
                         [ "demo xs <-"
                         , "    xs"
-                        , "        |> filter (score > 0.0)"
+                        , "        |> filter (score > 0)"
                         , "        |> arrange { desc score }"
                         ]
                     )
