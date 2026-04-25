@@ -31,6 +31,23 @@ suite =
                 "dplyr::filter(score > 80)"
         , Harness.test "generate/formats_dataframe_pipeline_readably" <|
             expectGenerated mtcarsSource mtcarsExpectedR
+        , Harness.test "generate/builtin_mtcars_dataset" <|
+            expectGeneratedContains
+                ( T.unlines
+                    [ "demo <- mtcars |> group_by { cyl } |> summarize { n_cars = count mpg }"
+                    ]
+                )
+                "demo <- datasets::mtcars |>"
+        , Harness.test "generate/builtin_example_datasets" <|
+            expectGeneratedContains
+                ( T.unlines
+                    [ "iris_demo <- iris"
+                    , "air_demo <- airquality"
+                    , "plant_demo <- plant_growth"
+                    , "tooth_demo <- tooth_growth"
+                    ]
+                )
+                "tooth_demo <- dplyr::mutate(datasets::ToothGrowth"
         ]
 
 

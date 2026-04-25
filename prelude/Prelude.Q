@@ -67,6 +67,58 @@ extern reducer max : Vector Double -> Double = "max"
 #' Vectorized conditional. Use when the condition may be a vector.
 extern elementwise if_else : Logical -> a -> a -> a = "dplyr::if_else"
 
+#' Motor Trend car road tests.
+extern mtcars :
+    dataframe
+        { mpg : Vector Double
+        , cyl : Vector Integer
+        , disp : Vector Double
+        , hp : Vector Double
+        , drat : Vector Double
+        , wt : Vector Double
+        , qsec : Vector Double
+        , vs : Vector Integer
+        , am : Vector Integer
+        , gear : Vector Integer
+        , carb : Vector Integer
+        } = "datasets::mtcars"
+
+#' Fisher iris measurements with Quone-safe column names.
+extern iris :
+    dataframe
+        { sepal_length : Vector Double
+        , sepal_width : Vector Double
+        , petal_length : Vector Double
+        , petal_width : Vector Double
+        , species : Vector Character
+        } = "dplyr::mutate(dplyr::rename(datasets::iris, sepal_length = Sepal.Length, sepal_width = Sepal.Width, petal_length = Petal.Length, petal_width = Petal.Width, species = Species), species = as.character(species))"
+
+#' New York air quality measurements with Quone-safe column names.
+extern airquality :
+    dataframe
+        { ozone : Vector Double
+        , solar_r : Vector Double
+        , wind : Vector Double
+        , temp : Vector Double
+        , month : Vector Integer
+        , day : Vector Integer
+        } = "dplyr::rename(datasets::airquality, ozone = Ozone, solar_r = Solar.R, wind = Wind, temp = Temp, month = Month, day = Day)"
+
+#' Plant growth experiment with Quone-safe column names.
+extern plant_growth :
+    dataframe
+        { weight : Vector Double
+        , group : Vector Character
+        } = "dplyr::mutate(datasets::PlantGrowth, group = as.character(group))"
+
+#' Tooth growth experiment with Quone-safe column names.
+extern tooth_growth :
+    dataframe
+        { len : Vector Double
+        , supp : Vector Character
+        , dose : Vector Double
+        } = "dplyr::mutate(datasets::ToothGrowth, supp = as.character(supp))"
+
 #' Test whether a string contains a pattern.
 extern elementwise str_detect : Character -> Character -> Logical = "stringr::str_detect"
 #' Convert text to upper case.

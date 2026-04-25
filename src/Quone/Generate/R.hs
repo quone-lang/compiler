@@ -459,7 +459,10 @@ generateExpr = generateExprIn emptyGenEnv
 generateExprIn :: GenEnv -> Expr -> Text
 generateExprIn env = \case
     ELit _ lit -> literal lit
-    EVar n -> resolvedName env n
+    EVar n ->
+        case Map.lookup (lowerText n) (geExternBodies env) of
+            Just body -> externValueR body
+            Prelude.Nothing -> resolvedName env n
     ECon n ->
         -- Nullary constructors (`True`, `False`, `Nothing`) lower
         -- directly: `True`/`False` to R booleans, others to a tagged
@@ -686,6 +689,12 @@ externCall env body args =
                     -- Underapplied: fall back to the verbatim form so
                     -- the resulting R is at least syntactically valid.
                     callR r (Prelude.fmap (generateExprIn env) args)
+
+
+externValueR :: ExternBody -> Text
+externValueR = \case
+    ExternSimple _ r -> parenthesiseIfFn r
+    ExternDispatch _ r _ -> r
 
 
 -- | If the extern body string looks like an R function expression
