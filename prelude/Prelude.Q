@@ -4,59 +4,94 @@
 #' initial-release primitive types, core custom types, fixed operator overloads,
 #' common vectorized functions, reducers, and small Result helpers.
 
+#' Whole-number scalar type. Integer literals use the `L` suffix.
 extern type Integer
+#' Floating-point scalar type. Bare numeric literals such as `1` are Double.
 extern type Double
+#' Text scalar type. Lowers to R character values.
 extern type Character
+#' Homogeneous vector type.
 extern type Vector a
 
+#' Logical truth value.
 type Logical <- True | False
+#' Optional value. Use `Nothing` for missingness and `Just value` for present data.
 type Maybe a <- Nothing | Just a
+#' Fallible result. `Ok value` is success; `Err error` is failure.
 type Result e a <- Err e | Ok a
 
+#' Convert an Integer to a Double explicitly.
 extern elementwise to_double : Integer -> Double = "as.double"
+#' Convert a value to Character using R's `as.character`.
 extern elementwise to_character : a -> Character = "as.character"
 
+#' Square root.
 extern elementwise sqrt : Double -> Double = "sqrt"
+#' Absolute value.
 extern elementwise abs : Double -> Double = "abs"
+#' Natural logarithm.
 extern elementwise log : Double -> Double = "log"
+#' Exponential function.
 extern elementwise exp : Double -> Double = "exp"
+#' Round to the nearest whole value.
 extern elementwise round : Double -> Double = "round"
+#' Round down.
 extern elementwise floor : Double -> Double = "floor"
+#' Round up.
 extern elementwise ceiling : Double -> Double = "ceiling"
 
+#' Apply a function to every element of a vector.
 extern elementwise map : (a -> b) -> Vector a -> Vector b = "purrr::map" { dispatch_on = "b" }
+#' Apply a binary function to two vectors element by element.
 extern elementwise map2 : (a -> b -> c) -> Vector a -> Vector b -> Vector c = "purrr::map2"
 
+#' Count the elements in a vector.
 extern reducer length : Vector a -> Integer = "length"
+#' Count the elements in a vector.
 extern reducer count : Vector a -> Integer = "length"
+#' Arithmetic mean.
 extern reducer mean : Vector Double -> Double = "mean"
+#' Median.
 extern reducer median : Vector Double -> Double = "stats::median"
+#' Sum of a numeric vector.
 extern reducer sum : Vector Double -> Double = "sum"
+#' Standard deviation.
 extern reducer sd : Vector Double -> Double = "stats::sd"
+#' Variance.
 extern reducer var : Vector Double -> Double = "stats::var"
+#' Minimum value.
 extern reducer min : Vector Double -> Double = "min"
+#' Maximum value.
 extern reducer max : Vector Double -> Double = "max"
 
+#' Vectorized conditional. Use when the condition may be a vector.
 extern elementwise if_else : Logical -> a -> a -> a = "dplyr::if_else"
 
+#' Test whether a string contains a pattern.
 extern elementwise str_detect : Character -> Character -> Logical = "stringr::str_detect"
+#' Convert text to upper case.
 extern elementwise str_to_upper : Character -> Character = "stringr::str_to_upper"
+#' Convert text to lower case.
 extern elementwise str_to_lower : Character -> Character = "stringr::str_to_lower"
 
+#' Extract a Maybe value, using the fallback when it is Nothing.
 with_default : a -> Maybe a -> a
 with_default fallback m <-
     case m of
         Just x -> x
         Nothing -> fallback
 
+#' Map over the Ok value of a Result, leaving Err unchanged.
 result_map : (v -> w) -> Result e v -> Result e w
 result_map f r <-
     case r of
         Ok v -> Ok (f v)
         Err e -> Err e
 
+#' Stop execution with an error message.
 extern reducer panic : Character -> a = "stop"
 
+#' Unwrap an Ok value or stop execution on Err.
 expect : Result e a -> a
 expect r <-
     case r of

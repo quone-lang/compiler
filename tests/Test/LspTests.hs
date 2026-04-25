@@ -27,6 +27,8 @@ suite =
                 CompileFailed ds -> Prelude.pure (Prelude.length ds === 0)
         , Harness.test "lsp/hover_uses_quone_marked_string" <|
             Prelude.pure hoverUsesQuoneMarkedString
+        , Harness.test "lsp/hover_shows_prelude_docs" <|
+            Prelude.pure hoverShowsPreludeDocs
         ]
 
 
@@ -84,4 +86,66 @@ hoverUsesQuoneMarkedString =
 
         other ->
             Fail ("unexpected hover payload: " ++ T.pack (Prelude.show other))
+
+
+hoverShowsPreludeDocs :: TestResult
+hoverShowsPreludeDocs =
+    let
+        uri =
+            "file:///hover-prelude.Q"
+
+        src =
+            "x <- mean [1, 2, 3]"
+
+        openParams =
+            Json.object
+                [ ( "textDocument"
+                  , Json.object
+                        [ ("uri", Json.str uri)
+                        , ("version", Json.int 1)
+                        , ("text", Json.str src)
+                        ]
+                  )
+                ]
+
+        hoverParams =
+            Json.object
+                [ ( "textDocument"
+                  , Json.object [("uri", Json.str uri)]
+                  )
+                , ( "position"
+                  , Json.object
+                        [ ("line", Json.int 0)
+                        , ("character", Json.int 6)
+                        ]
+                  )
+                ]
+
+        (state, _) =
+            Handlers.handleDidOpen openParams State.empty
+
+        hover =
+            Handlers.handleHover hoverParams state
+    in
+    case Json.lookupField "contents" hover of
+        Just (Json.VArray [signature, Json.VString doc]) ->
+            let
+                language =
+                    Json.lookupField "language" signature
+                        Prelude.>>= Json.asString
+
+                value =
+                    Json.lookupField "value" signature
+                        Prelude.>>= Json.asString
+            in
+            if language Prelude.== Just "quone"
+                && value Prelude.== Just "mean : (Vector Double) -> Double"
+                && "Arithmetic mean." `T.isInfixOf` doc
+            then
+                Pass
+            else
+                Fail ("unexpected prelude hover: " ++ T.pack (Prelude.show hover))
+
+        other ->
+            Fail ("unexpected prelude hover payload: " ++ T.pack (Prelude.show other))
 

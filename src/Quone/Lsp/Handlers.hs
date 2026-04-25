@@ -46,6 +46,8 @@ import qualified Quone.Lsp.Json as Json
 import qualified Quone.Lsp.State as State
 import qualified Quone.Lsp.Symbols as Symbols
 import qualified Quone.Position as Position
+import qualified Quone.Prelude.Load as PreludeLoad
+import qualified Quone.Type.Env as TypeEnv
 import qualified Quone.Type.Infer as Infer
 import qualified Prelude
 
@@ -233,10 +235,20 @@ handleHover params state = case lookupContext params state of
             Prelude.Nothing -> Json.VNull
             Just (line, col) ->
                 let
-                    symbols = Symbols.buildIndex prog typed
+                    symbols = allSymbols prog typed
                 in
                 case Symbols.symbolAt line col symbols of
-                    Prelude.Nothing -> Json.VNull
+                    Prelude.Nothing ->
+                        case wordAt line col (State.docText doc) of
+                            Prelude.Nothing -> Json.VNull
+                            Just word ->
+                                case Prelude.filter (\s -> Symbols.symName s Prelude.== word) symbols of
+                                    (sym : _) ->
+                                        Json.object
+                                            [ ("contents", hoverContents sym)
+                                            , ("range", spanRange (Symbols.symSpan sym))
+                                            ]
+                                    [] -> Json.VNull
                     Just sym ->
                         Json.object
                             [ ("contents", hoverContents sym)
@@ -252,7 +264,7 @@ handleDefinition params state = case lookupContext params state of
             Prelude.Nothing -> Json.VNull
             Just (line, col) ->
                 let
-                    symbols = Symbols.buildIndex prog typed
+                    symbols = allSymbols prog typed
                     needle = wordAt line col (State.docText doc)
                     matches = case needle of
                         Prelude.Nothing -> []
@@ -440,7 +452,7 @@ handleCompletion params state =
     let
         symbolItems = case lookupContext params state of
             Just (_, _, prog, typed) ->
-                Prelude.fmap symbolItem (Symbols.buildIndex prog typed)
+                Prelude.fmap symbolItem (allSymbols prog typed)
             Prelude.Nothing -> []
         keywordItems =
             Prelude.fmap keywordItem
@@ -501,6 +513,25 @@ handleFormatting params state = case Json.lookupField "textDocument" params of
             Prelude.Nothing -> Json.VArray []
         Prelude.Nothing -> Json.VArray []
     Prelude.Nothing -> Json.VArray []
+
+
+allSymbols :: Ast.Program -> Infer.TypedProgram -> [Symbols.Symbol]
+allSymbols prog typed =
+    Symbols.buildIndex prog typed Prelude.++ preludeSymbols
+
+
+preludeSymbols :: [Symbols.Symbol]
+preludeSymbols =
+    case PreludeLoad.loadPrelude of
+        Prelude.Right loaded ->
+            Symbols.buildIndex
+                (PreludeLoad.preludeProgram loaded)
+                ( Infer.TypedProgram
+                    { Infer.typedProgram = PreludeLoad.preludeProgram loaded
+                    , Infer.typedBindings = TypeEnv.envValues (PreludeLoad.preludeEnv loaded)
+                    }
+                )
+        Prelude.Left _ -> []
 
 
 fullRange :: Text -> Json.Value
