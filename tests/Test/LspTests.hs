@@ -35,6 +35,10 @@ suite =
             Prelude.pure hoverFormatsLargeSignaturesLikeQuone
         , Harness.test "lsp/hover_shows_dplyr_verb_signature" <|
             Prelude.pure hoverShowsDplyrVerbSignature
+        , Harness.test "lsp/hover_ignores_record_punctuation" <|
+            Prelude.pure hoverIgnoresRecordPunctuation
+        , Harness.test "lsp/type_mismatch_includes_hint_and_application_range" <|
+            Prelude.pure typeMismatchIncludesHintAndApplicationRange
         , Harness.test "lsp/formatting_replaces_final_line_without_trailing_newline" <|
             Prelude.pure formattingReplacesFinalLineWithoutTrailingNewline
         ]
@@ -94,6 +98,102 @@ hoverUsesQuoneMarkedString =
 
         other ->
             Fail ("unexpected hover payload: " ++ T.pack (Prelude.show other))
+
+
+hoverIgnoresRecordPunctuation :: TestResult
+hoverIgnoresRecordPunctuation =
+    let
+        uri =
+            "file:///record-hover.Q"
+
+        src =
+            T.unlines
+                [ "x :"
+                , "    { a : Double"
+                , "    , b : Double"
+                , "    , c : Double"
+                , "    }"
+                , "x <-"
+                , "    { a = 1"
+                , "    , b = 2"
+                , "    , c = 3"
+                , "    }"
+                ]
+
+        openParams =
+            Json.object
+                [ ( "textDocument"
+                  , Json.object
+                        [ ("uri", Json.str uri)
+                        , ("version", Json.int 1)
+                        , ("text", Json.str src)
+                        ]
+                  )
+                ]
+
+        hoverParams =
+            Json.object
+                [ ( "textDocument"
+                  , Json.object [("uri", Json.str uri)]
+                  )
+                , ( "position"
+                  , Json.object
+                        [ ("line", Json.int 6)
+                        , ("character", Json.int 4)
+                        ]
+                  )
+                ]
+
+        (state, _) =
+            Handlers.handleDidOpen openParams State.empty
+    in
+    Handlers.handleHover hoverParams state === Json.VNull
+
+
+typeMismatchIncludesHintAndApplicationRange :: TestResult
+typeMismatchIncludesHintAndApplicationRange =
+    case compileText "<test>" "a <- mean 1" of
+        CompileOk _ _ -> Fail "expected type failure"
+        CompileFailed [d] ->
+            let
+                published = Handlers.publishDiagnostics "file:///test.Q" [d]
+                mDiag =
+                    Json.lookupField "params" published
+                        Prelude.>>= Json.lookupField "diagnostics"
+                        Prelude.>>= Json.asArray
+                        Prelude.>>= firstValue
+                mMessage = mDiag Prelude.>>= Json.lookupField "message" Prelude.>>= Json.asString
+                mSource = mDiag Prelude.>>= Json.lookupField "source"
+                mCode = mDiag Prelude.>>= Json.lookupField "code"
+                mRange = mDiag Prelude.>>= Json.lookupField "range"
+                mStart = mRange Prelude.>>= Json.lookupField "start"
+                mEnd = mRange Prelude.>>= Json.lookupField "end"
+                mStartChar = mStart Prelude.>>= Json.lookupField "character" Prelude.>>= Json.asInt
+                mEndChar = mEnd Prelude.>>= Json.lookupField "character" Prelude.>>= Json.asInt
+            in
+            case (mMessage, mSource, mCode, mStartChar, mEndChar) of
+                (Just message, Nothing, Nothing, Just startChar, Just endChar)
+                    | "Vector Double" `T.isInfixOf` message
+                        && "This argument is:" `T.isInfixOf` message
+                        && "The 1st argument to `mean` is not what I expect:" `T.isInfixOf` message
+                        && startChar Prelude.== 5
+                        && endChar Prelude.== 11 ->
+                            Pass
+                    | Prelude.otherwise ->
+                        Fail
+                            ( "unexpected diagnostic message/range: "
+                                ++ T.pack (Prelude.show (message, mSource, mCode, startChar, endChar))
+                            )
+                other ->
+                    Fail ("unexpected diagnostic payload: " ++ T.pack (Prelude.show other))
+        CompileFailed ds ->
+            Fail ("expected one diagnostic, got " ++ T.pack (Prelude.show (Prelude.length ds)))
+
+
+firstValue :: [Json.Value] -> Maybe Json.Value
+firstValue = \case
+    x : _ -> Just x
+    [] -> Nothing
 
 
 hoverShowsPreludeDocs :: TestResult
@@ -428,7 +528,7 @@ formattingReplacesFinalLineWithoutTrailingNewline =
             in
             if mEndLine Prelude.== Just 0
                 && mEndCharacter Prelude.== Just (Prelude.fromIntegral (T.length src))
-                && mNewText Prelude.== Just "answer <- 42\n"
+                && mNewText Prelude.== Just "answer <-\n    42\n"
             then
                 Pass
             else

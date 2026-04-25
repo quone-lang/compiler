@@ -76,6 +76,15 @@ suite =
             expectFail "xs <- [1, \"a\"]"
         , Harness.test "release/rejects_mixed_numeric_without_conversion" <|
             expectFail "x <- 1L + 2"
+        , Harness.test "release/rejects_duplicate_value_binding" <|
+            expectFailContains
+                ( T.unlines
+                    [ "x <- 1"
+                    , ""
+                    , "x <- 2"
+                    ]
+                )
+                "is already defined"
         , Harness.test "release/checks_explicit_numeric_conversion" <|
             expectOk "x <- to_double 1L + 2"
         , Harness.test "release/checks_dataframe_pipeline" <|
@@ -134,6 +143,16 @@ expectFail :: Text -> Prelude.IO TestResult
 expectFail src =
     case compileScript "<test>" src of
         Prelude.Left _ -> Prelude.pure Pass
+        Prelude.Right _ -> Prelude.pure (Fail "expected failure")
+
+
+expectFailContains :: Text -> Text -> Prelude.IO TestResult
+expectFailContains src expected =
+    case compileScript "<test>" src of
+        Prelude.Left d ->
+            if expected `T.isInfixOf` T.pack (Prelude.show d)
+                then Prelude.pure Pass
+                else Prelude.pure (Fail ("diagnostic did not contain " ++ expected ++ ": " ++ T.pack (Prelude.show d)))
         Prelude.Right _ -> Prelude.pure (Fail "expected failure")
 
 

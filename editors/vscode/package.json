@@ -28,6 +28,20 @@
         "configuration": "./language-configuration.json"
       }
     ],
+    "commands": [
+      {
+        "command": "quone.smartEnter",
+        "title": "Quone: Smart Enter"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "quone.smartEnter",
+        "key": "enter",
+        "mac": "enter",
+        "when": "editorTextFocus && editorLangId == quone"
+      }
+    ],
     "grammars": [
       {
         "language": "quone",

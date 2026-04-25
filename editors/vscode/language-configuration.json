@@ -23,5 +23,11 @@
     "increaseIndentPattern": "^.*(<-|->|of|in|exporting|then|else)\\s*$",
     "decreaseIndentPattern": "^\\s*[)\\]}].*$",
     "unIndentedLinePattern": "^\\s*$"
-  }
+  },
+  "onEnterRules": [
+    {
+      "beforeText": "^\\s*$",
+      "action": { "indentAction": "none" }
+    }
+  ]
 }

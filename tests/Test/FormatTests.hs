@@ -15,13 +15,13 @@ suite =
             Prelude.pure
                 ( assertFormatted
                     "x<-1+2"
-                    "x <- 1 + 2\n"
+                    (T.unlines ["x <-", "    1 + 2"])
                 )
         , Harness.test "format/is_formatted_matches_elm_format_check" <|
             Prelude.pure
                 ( if Format.isFormatted "<test>" "x<-1+2" then
                     Fail "unformatted source was reported as formatted"
-                  else if Prelude.not (Format.isFormatted "<test>" "x <- 1 + 2\n") then
+                  else if Prelude.not (Format.isFormatted "<test>" (T.unlines ["x <-", "    1 + 2"])) then
                     Fail "canonical source was reported as unformatted"
                   else
                     Pass
@@ -30,37 +30,128 @@ suite =
             Prelude.pure
                 ( assertFormatted
                     "x <- 1\ny <- 1L"
-                    "x <- 1\n\ny <- 1L\n"
+                    (T.unlines ["x <-", "    1", "", "y <-", "    1L"])
                 )
         , Harness.test "format/preserves_top_of_file_comment" <|
             Prelude.pure
                 ( assertFormatted
                     "# keep me\nx <- 1"
-                    "# keep me\nx <- 1\n"
+                    (T.unlines ["# keep me", "x <-", "    1"])
                 )
         , Harness.test "format/preserves_top_of_file_doc_comment" <|
             Prelude.pure
                 ( assertFormatted
                     "#' Hello\n#'\nx <- 1"
-                    "#' Hello\n#'\nx <- 1\n"
+                    (T.unlines ["#' Hello", "#'", "x <-", "    1"])
                 )
         , Harness.test "format/preserves_between_decl_comment" <|
             Prelude.pure
                 ( assertFormatted
                     (T.unlines ["x<-1", "# explain y", "y<-2"])
-                    (T.unlines ["x <- 1", "", "# explain y", "y <- 2"])
+                    (T.unlines ["x <-", "    1", "", "# explain y", "y <-", "    2"])
+                )
+        , Harness.test "format/final_bare_expression" <|
+            Prelude.pure
+                ( assertFormatted
+                    (T.unlines ["x<-1", "x+1"])
+                    (T.unlines ["x <-", "    1", "", "x + 1"])
                 )
         , Harness.test "format/short_record_literal_stays_inline" <|
             Prelude.pure
                 ( assertFormatted
                     "row<-{a=1,b=2}"
-                    "row <- { a = 1, b = 2 }\n"
+                    (T.unlines ["row <-", "    { a = 1, b = 2 }"])
+                )
+        , Harness.test "format/multiline_record_literal_breaks_fields" <|
+            Prelude.pure
+                ( assertFormatted
+                    (T.unlines ["row <- { a = 1,", "b = 2, c = 3 }"])
+                    ( T.unlines
+                        [ "row <-"
+                        , "    { a = 1"
+                        , "    , b = 2"
+                        , "    , c = 3"
+                        , "    }"
+                        ]
+                    )
+                )
+        , Harness.test "format/wide_record_literal_breaks_fields" <|
+            Prelude.pure
+                ( assertFormatted
+                    "row <- { alpha_value = 1, beta_value = 2, gamma_value = 3, delta_value = 4, epsilon_value = 5 }"
+                    ( T.unlines
+                        [ "row <-"
+                        , "    { alpha_value = 1"
+                        , "    , beta_value = 2"
+                        , "    , gamma_value = 3"
+                        , "    , delta_value = 4"
+                        , "    , epsilon_value = 5"
+                        , "    }"
+                        ]
+                    )
+                )
+        , Harness.test "format/multiline_record_type_breaks_fields" <|
+            Prelude.pure
+                ( assertFormatted
+                    ( T.unlines
+                        [ "row : { a : Double,"
+                        , "b : Double, c : Double }"
+                        , "row <- { a = 1, b = 2, c = 3 }"
+                        ]
+                    )
+                    ( T.unlines
+                        [ "row :"
+                        , "    { a : Double"
+                        , "    , b : Double"
+                        , "    , c : Double"
+                        , "    }"
+                        , "row <-"
+                        , "    { a = 1, b = 2, c = 3 }"
+                        ]
+                    )
                 )
         , Harness.test "format/function_body_stays_below_bind" <|
             Prelude.pure
                 ( assertFormatted
                     "add x y <- x + y"
                     (T.unlines ["add x y <-", "    x + y"])
+                )
+        , Harness.test "format/short_if_stays_inline" <|
+            Prelude.pure
+                ( assertFormatted
+                    "b <- if z then 1 else 2"
+                    (T.unlines ["b <-", "    if z then 1 else 2"])
+                )
+        , Harness.test "format/multiline_if_breaks_branches" <|
+            Prelude.pure
+                ( assertFormatted
+                    ( T.unlines
+                        [ "b <-"
+                        , "    if z then "
+                        , "        1 else 2"
+                        ]
+                    )
+                    ( T.unlines
+                        [ "b <-"
+                        , "    if z then"
+                        , "        1"
+                        , "    else"
+                        , "        2"
+                        ]
+                    )
+                )
+        , Harness.test "format/wide_if_breaks_branches" <|
+            Prelude.pure
+                ( assertFormatted
+                    "b <- if z then this_branch_name_is_long_enough_to_force_a_break else that_branch_name_is_also_long"
+                    ( T.unlines
+                        [ "b <-"
+                        , "    if z then"
+                        , "        this_branch_name_is_long_enough_to_force_a_break"
+                        , "    else"
+                        , "        that_branch_name_is_also_long"
+                        ]
+                    )
                 )
         , Harness.test "format/preserves_foreign_import_alias_and_via" <|
             Prelude.pure
@@ -162,10 +253,7 @@ mtcarsExpected =
         , "        |> mutate { power_to_weight = hp / wt }"
         , "        |> group_by { cyl }"
         , "        |> summarize"
-        , "            { n_cars = count"
-        , "            , avg_mpg = mean mpg"
-        , "            , avg_hp = mean hp"
-        , "            }"
+        , "            { n_cars = count, avg_mpg = mean mpg, avg_hp = mean hp }"
         , "        |> arrange { desc avg_mpg }"
         ]
 

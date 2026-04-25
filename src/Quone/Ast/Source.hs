@@ -119,6 +119,9 @@ data Program = Program
     { programSpan :: SourceSpan
     , programModule :: Maybe ModuleDecl
     , programDecls :: [Decl]
+    , -- | Optional final bare expression for scripts. It must be the
+      -- last top-level form and is emitted as a bare R expression.
+      programFinalExpr :: Maybe Expr
     , -- | True for the embedded prelude module loaded by
       -- 'Quone.Prelude.Load.loadPrelude'. The implicit-import injector
       -- and the @extern@/@infix@ parser checks both consult this flag

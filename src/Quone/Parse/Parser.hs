@@ -390,20 +390,46 @@ pProgram = do
     skipTopLevelLayout
     decls <- many_ (pDecl <* skipTopLevelLayout)
     skipTopLevelLayout
+    finalExpr <- pOptionalFinalExpr
+    skipTopLevelLayout
     _ <- expectTok TEof
     let
         sp = case mModule of
             Just m -> moduleDeclSpan m
-            Nothing -> case decls of
-                (d : _) -> declSpan d
-                [] -> spanFromPos (SourcePos "<input>" 1 1)
+            Nothing -> case (decls, finalExpr) of
+                (d : _, _) -> declSpan d
+                ([], Just expr) -> exprSpan expr
+                ([], Nothing) -> spanFromPos (SourcePos "<input>" 1 1)
     Prelude.pure
         ( CProgram
             { programSpan = sp
             , programModule = mModule
             , programDecls = decls
+            , programFinalExpr = finalExpr
             }
         )
+
+
+pOptionalFinalExpr :: P (Maybe CExpr)
+pOptionalFinalExpr = do
+    nextSig <- peekSig
+    case locValue nextSig of
+        TEof ->
+            Prelude.pure Nothing
+        _ ->
+            Just <$> pFinalExpr
+
+
+pFinalExpr :: P CExpr
+pFinalExpr = do
+    expr <- pExpr
+    skipTopLevelLayout
+    nextSig <- peekSig
+    case locValue nextSig of
+        TEof ->
+            Prelude.pure expr
+        _ ->
+            P (\st -> PErr (nonFinalBareExprDiag st))
 
 
 pModuleDecl :: P CModuleDecl
@@ -1004,7 +1030,14 @@ pAnnotation = do
 pValueDef :: P (CLowerName, [CLowerName], CExpr, SourceSpan)
 pValueDef = do
     name <- expectLowerIdent
-    params <- many_ expectLowerIdent
+    params <- many_ (try_ <| do
+        crossed <- crossedLine
+        when crossed
+            (P (\st -> PErr (parseFail "" st)))
+        expectLowerIdent)
+    crossedBeforeBind <- crossedLine
+    when crossedBeforeBind
+        (P (\st -> PErr (parseFail "" st)))
     _ <- expectTok TBind
     body <- pExpr
     Prelude.pure
@@ -1814,6 +1847,25 @@ eofDiag filename =
         , diagSpan = spanFromPos (SourcePos filename 0 0)
         , diagMessage = "unexpected end of input"
         , diagHint = Nothing
+        }
+
+
+nonFinalBareExprDiag :: State -> Diagnostic
+nonFinalBareExprDiag s =
+    let
+        sp = case dropLayout (stateTokens s) of
+            (Located {locSpan = sp_} : _) -> sp_
+            _ -> spanFromPos (SourcePos (stateFile s) 0 0)
+    in
+    Diagnostic
+        { diagSeverity = Error
+        , diagCategory = Parse
+        , diagSpan = sp
+        , diagMessage =
+            "bare expressions are only allowed at the end of a script"
+        , diagHint =
+            Just
+                "Quone follows R's script-printing style only for the final top-level expression. Move this expression after all declarations, or bind it with `<-`."
         }
 
 

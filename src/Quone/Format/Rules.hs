@@ -73,11 +73,15 @@ formatCstWithComments comments prog =
     let
         sortedComments = stableSortByLine comments
 
-        decls = programDecls prog
+        items =
+            Prelude.fmap TopDecl (programDecls prog)
+                Prelude.++ case programFinalExpr prog of
+                    Nothing -> []
+                    Just expr -> [TopFinal expr]
 
-        -- For each declaration, split the comments into "this and
-        -- before" (will be emitted before this decl) vs "later".
-        chunked = chunkComments sortedComments decls
+        -- For each top-level item, split the comments into "this and
+        -- before" (will be emitted before this item) vs "later".
+        chunked = chunkComments sortedComments items
 
         moduleDoc = case programModule prog of
             Just m -> formatModule m <> line <> line
@@ -88,7 +92,12 @@ formatCstWithComments comments prog =
     ensureTrailingNewline (render (moduleDoc <> body))
 
 
-renderChunks :: [(Maybe CDecl, [Comment])] -> Doc
+data CTopLevel
+    = TopDecl CDecl
+    | TopFinal CExpr
+
+
+renderChunks :: [(Maybe CTopLevel, [Comment])] -> Doc
 renderChunks = goSep
   where
     goSep [] = empty
@@ -105,7 +114,7 @@ renderChunks = goSep
         Prelude.Nothing -> line
 
 
-chunkDoc :: Maybe CDecl -> [Comment] -> Doc
+chunkDoc :: Maybe CTopLevel -> [Comment] -> Doc
 chunkDoc maybeDecl comments =
     let
         commentDoc = case comments of
@@ -117,13 +126,19 @@ chunkDoc maybeDecl comments =
                         Just _ -> empty   -- decl follows on the next chunk position
                         Prelude.Nothing -> empty
         declDoc = case maybeDecl of
-            Just d -> formatDecl d
+            Just item -> formatTopLevel item
             Prelude.Nothing -> empty
     in
     case (comments, maybeDecl) of
         ([], Just _) -> declDoc
         (_, Just _) -> commentDoc <> declDoc
         (_, Prelude.Nothing) -> commentDoc
+
+
+formatTopLevel :: CTopLevel -> Doc
+formatTopLevel = \case
+    TopDecl d -> formatDecl d
+    TopFinal expr -> formatExpr expr
 
 
 renderComment :: Comment -> Doc
@@ -138,26 +153,26 @@ renderComment c =
     prefix <> line
 
 
--- | Pair each declaration with the comments that should immediately
+-- | Pair each top-level item with the comments that should immediately
 -- precede it. A trailing tuple with 'Prelude.Nothing' carries any
--- comments that fell after the last declaration.
-chunkComments :: [Comment] -> [CDecl] -> [(Maybe CDecl, [Comment])]
-chunkComments cs0 decls0 =
+-- comments that fell after the last item.
+chunkComments :: [Comment] -> [CTopLevel] -> [(Maybe CTopLevel, [Comment])]
+chunkComments cs0 items0 =
     let
-        (chunks, leftover) = go cs0 decls0
+        (chunks, leftover) = go cs0 items0
     in
     case leftover of
         [] -> chunks
         cs -> chunks ++ [(Prelude.Nothing, cs)]
   where
     go cs [] = ([], cs)
-    go cs (d : rest) =
+    go cs (item : rest) =
         let
-            startLine = posLine (spanStart (declSpanCst d))
+            startLine = posLine (spanStart (topLevelSpanCst item))
             (before, after) = Prelude.span (\c -> commentLine c Prelude.<= startLine) cs
             (chunks, leftover) = go after rest
         in
-        ((Just d, before) : chunks, leftover)
+        ((Just item, before) : chunks, leftover)
 
 
 commentLine :: Comment -> Int
@@ -175,6 +190,34 @@ declSpanCst = \case
     CDExtern (CExternType sp _ _ _) -> sp
     CDInfix d -> infixDeclSpan d
     CDPrefix d -> prefixDeclSpan d
+
+
+topLevelSpanCst :: CTopLevel -> SourceSpan
+topLevelSpanCst = \case
+    TopDecl d -> declSpanCst d
+    TopFinal expr -> exprSpanCst expr
+
+
+exprSpanCst :: CExpr -> SourceSpan
+exprSpanCst = \case
+    CELit sp _ -> sp
+    CEVar n -> lowerNameSpan n
+    CECon n -> upperNameSpan n
+    CELambda sp _ _ -> sp
+    CEIf sp _ _ _ -> sp
+    CECase sp _ _ -> sp
+    CELet sp _ _ -> sp
+    CEApp sp _ _ -> sp
+    CEBinOp sp _ _ _ -> sp
+    CEUnary sp _ _ -> sp
+    CEPipe sp _ _ -> sp
+    CEField sp _ _ -> sp
+    CEParen sp _ -> sp
+    CERecord sp _ -> sp
+    CERecordUpdate sp _ _ -> sp
+    CEDataframe sp _ -> sp
+    CEVector sp _ -> sp
+    CEVerb sp _ _ -> sp
 
 
 stableSortByLine :: [Comment] -> [Comment]
@@ -364,10 +407,7 @@ formatValue v =
                 <+> text "<-"
         body = formatExpr (valueDeclBody v)
         renderedBody =
-            if Prelude.not (Prelude.null (valueDeclParams v))
-                || exprIsMultiline (valueDeclBody v)
-                then head_ <> line <> Doc.indent 4 body
-                else group (head_ <+> body)
+            head_ <> line <> Doc.indent 4 body
     in
     formatDoc (valueDeclDoc v)
         <> annotation
@@ -522,9 +562,8 @@ typeAtomIsMultiline = \case
 
 recordTypeIsMultiline :: CRecordType -> Bool
 recordTypeIsMultiline r =
-    case recordTypeFields r of
-        _ : _ : _ -> True
-        _ -> False
+    spanIsMultiline (recordTypeSpan r)
+        || recordFieldsAreWide (Prelude.fmap formatFieldType (recordTypeFields r))
 
 
 formatTypeAtom :: CTypeAtom -> Doc
@@ -541,7 +580,9 @@ formatTypeAtom = \case
 
 formatRecordType :: CRecordType -> Doc
 formatRecordType r =
-    multilineRecordLike (Prelude.fmap formatFieldType (recordTypeFields r))
+    formatRecordLike
+        (recordTypeSpan r)
+        (Prelude.fmap formatFieldType (recordTypeFields r))
 
 
 formatFieldType :: CFieldType -> Doc
@@ -567,13 +608,8 @@ formatExpr = \case
             <> hsep (Prelude.fmap (text Prelude.. lowerText) params)
             <+> text "->"
             <+> formatExpr body
-    CEIf _ c t elseBranch ->
-        text "if"
-            <+> formatExpr c
-            <+> text "then"
-            <+> formatExpr t
-            <+> text "else"
-            <+> formatExpr elseBranch
+    CEIf sp c t elseBranch ->
+        formatIf sp c t elseBranch
     CECase _ scrut arms ->
         text "case"
             <+> formatExpr scrut
@@ -598,7 +634,7 @@ formatExpr = \case
     CEField _ expr n ->
         formatExprAtomic expr <> text "." <> text (lowerText n)
     CEParen _ inner -> text "(" <> formatExpr inner <> text ")"
-    CERecord _ fs -> formatRecord fs
+    CERecord sp fs -> formatRecord sp fs
     CERecordUpdate _ target fs ->
         group
             ( text "{ "
@@ -607,37 +643,13 @@ formatExpr = \case
                 <+> hsepCommas (Prelude.fmap formatFieldBinding fs)
                 <> text " }"
             )
-    CEDataframe _ fs -> text "dataframe " <> formatRecord fs
+    CEDataframe sp fs -> text "dataframe " <> formatRecord sp fs
     CEVector _ es ->
         text "["
             <> hsepCommas (Prelude.fmap formatExpr es)
             <> text "]"
     CEVerb _ kw args ->
         formatVerb kw args
-
-
-exprIsMultiline :: CExpr -> Bool
-exprIsMultiline = \case
-    CELet _ _ _ -> True
-    CECase _ _ _ -> True
-    CEIf _ _ _ _ -> True
-    CEPipe _ _ _ -> True
-    CEVerb _ _ args -> Prelude.any dplyrArgIsMultiline args
-    CEVector _ es -> Prelude.any exprIsMultiline es
-    CEApp _ a b -> exprIsMultiline a || exprIsMultiline b
-    CEBinOp _ _ a b -> exprIsMultiline a || exprIsMultiline b
-    CEUnary _ _ expr -> exprIsMultiline expr
-    CEField _ expr _ -> exprIsMultiline expr
-    CEParen _ inner -> exprIsMultiline inner
-    _ -> False
-
-
-dplyrArgIsMultiline :: CDplyrArg -> Bool
-dplyrArgIsMultiline = \case
-    CDAExpr expr -> exprIsMultiline expr
-    CDARecord _ fs -> Prelude.length fs Prelude.> 1
-    CDAJoinOn _ target pairs -> exprIsMultiline target || Prelude.length pairs Prelude.> 1
-    CDAModifier _ -> False
 
 
 -- | Wrap atomic-position expressions in parentheses when the surface
@@ -662,6 +674,31 @@ formatLiteral = \case
     CLChar t -> text "\"" <> text (escape t) <> text "\""
   where
     escape = T.replace "\"" "\\\"" Prelude.. T.replace "\\" "\\\\"
+
+
+formatIf :: SourceSpan -> CExpr -> CExpr -> CExpr -> Doc
+formatIf sp condition thenBranch elseBranch =
+    let
+        inline =
+            text "if"
+                <+> formatExpr condition
+                <+> text "then"
+                <+> formatExpr thenBranch
+                <+> text "else"
+                <+> formatExpr elseBranch
+    in
+    if spanIsMultiline sp || T.length (render inline) Prelude.> (Doc.width Prelude.- 4)
+        then
+            text "if"
+                <+> formatExpr condition
+                <+> text "then"
+                <> line
+                <> Doc.indent 4 (formatExpr thenBranch)
+                <> line
+                <> text "else"
+                <> line
+                <> Doc.indent 4 (formatExpr elseBranch)
+        else inline
 
 
 binOpText :: CBinOp -> Text
@@ -703,16 +740,13 @@ formatBinding :: CBinding -> Doc
 formatBinding b =
     text (lowerText (bindingName b))
         <+> text "<-"
-        <+> formatExpr (bindingBody b)
+        <> line
+        <> Doc.indent 4 (formatExpr (bindingBody b))
 
 
-formatRecord :: [CFieldBinding] -> Doc
-formatRecord fs = case fs of
-    [] -> text "{ }"
-    _ ->
-        text "{ "
-            <> hsepCommas (Prelude.fmap formatFieldBinding fs)
-            <> text " }"
+formatRecord :: SourceSpan -> [CFieldBinding] -> Doc
+formatRecord sp fs =
+    formatRecordLike sp (Prelude.fmap formatFieldBinding fs)
 
 
 formatFieldBinding :: CFieldBinding -> Doc
@@ -734,7 +768,7 @@ formatFieldBinding f =
 formatDplyrArg :: CDplyrArg -> Doc
 formatDplyrArg = \case
     CDAExpr expr -> formatExprAtomic expr
-    CDARecord _ fs -> formatDplyrRecord fs
+    CDARecord sp fs -> formatDplyrRecord sp fs
     CDAModifier m -> formatModifier m
     CDAJoinOn _ target pairs ->
         formatExprAtomic target
@@ -743,11 +777,9 @@ formatDplyrArg = \case
             <> text " }"
 
 
-formatDplyrRecord :: [CFieldBinding] -> Doc
-formatDplyrRecord fs = case fs of
-    [] -> text "{ }"
-    [f] -> text "{ " <> formatFieldBinding f <> text " }"
-    _ -> multilineRecordLike (Prelude.fmap formatFieldBinding fs)
+formatDplyrRecord :: SourceSpan -> [CFieldBinding] -> Doc
+formatDplyrRecord sp fs =
+    formatRecordLike sp (Prelude.fmap formatFieldBinding fs)
 
 
 formatVerb :: Keyword -> [CDplyrArg] -> Doc
@@ -802,10 +834,8 @@ formatPattern = \case
         case args of
             [] -> text (upperText n)
             _ -> hsep (text (upperText n) : Prelude.fmap formatPattern args)
-    CPRecord _ fs ->
-        text "{ "
-            <> hsepCommas (Prelude.fmap formatRecordPatField fs)
-            <> text " }"
+    CPRecord sp fs ->
+        formatRecordLike sp (Prelude.fmap formatRecordPatField fs)
     CPVector _ ps ->
         text "[" <> hsepCommas (Prelude.fmap formatPattern ps) <> text "]"
     CPParen _ inner -> text "(" <> formatPattern inner <> text ")"
@@ -876,6 +906,31 @@ multilineRecordLike fields = case fields of
             <> concatD (Prelude.fmap (\field -> line <> text ", " <> field) rest)
             <> line
             <> text "}"
+
+
+formatRecordLike :: SourceSpan -> [Doc] -> Doc
+formatRecordLike sp fields
+    | spanIsMultiline sp || recordFieldsAreWide fields = multilineRecordLike fields
+    | Prelude.otherwise = inlineRecordLike fields
+
+
+inlineRecordLike :: [Doc] -> Doc
+inlineRecordLike fields = case fields of
+    [] -> text "{ }"
+    _ ->
+        text "{ "
+            <> hsepCommas fields
+            <> text " }"
+
+
+recordFieldsAreWide :: [Doc] -> Prelude.Bool
+recordFieldsAreWide fields =
+    T.length (render (inlineRecordLike fields)) Prelude.> Doc.width
+
+
+spanIsMultiline :: SourceSpan -> Prelude.Bool
+spanIsMultiline (SourceSpan start finish) =
+    posLine start Prelude./= posLine finish
 
 
 formatPipe :: CExpr -> Doc

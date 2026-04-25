@@ -78,6 +78,10 @@ answer <- 42
 normalize x <- x / 100
 ```
 
+A script may end with one bare expression. It is emitted as a bare R expression,
+so running the generated script prints it the same way R does. Bare expressions
+are not allowed before later declarations; bind intermediate values with `<-`.
+
 Quone uses indentation-sensitive blocks. Braces are used for records, dataframe
 schemas, and dataframe verb records.
 

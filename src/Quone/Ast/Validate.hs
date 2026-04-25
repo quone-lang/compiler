@@ -44,6 +44,7 @@ import Quone.Diagnostic
     , Severity (Error)
     )
 import Quone.Position (SourceSpan)
+import qualified Quone.Position as Position
 import qualified Prelude
 
 
@@ -55,6 +56,7 @@ validate prog =
     invariantExportConsistency prog
         ++ invariantRExportDiscipline prog
         ++ invariantExternIsPreludeOnly prog
+        ++ invariantNoDuplicateValueBindings prog
 
 
 -- | Convenience: validate and return either the program or the first
@@ -282,3 +284,68 @@ preludeOnlyDiag = \case
                 }
             )
     _ -> Nothing
+
+
+
+-- ---------------------------------------------------------------------
+-- Invariant: value bindings are immutable and cannot be redefined
+-- ---------------------------------------------------------------------
+
+
+invariantNoDuplicateValueBindings :: Program -> [Diagnostic]
+invariantNoDuplicateValueBindings prog =
+    go Map.empty [] (programDecls prog)
+  where
+    go _ diagnostics [] = Prelude.reverse diagnostics
+    go seen diagnostics (decl : rest) =
+        case valueBindingName decl of
+            Nothing -> go seen diagnostics rest
+            Just (name, sp) ->
+                case Map.lookup name seen of
+                    Just firstSpan ->
+                        go
+                            seen
+                            ( duplicateValueDiag name sp firstSpan : diagnostics
+                            )
+                            rest
+                    Nothing ->
+                        go
+                            (Map.insert name sp seen)
+                            diagnostics
+                            rest
+
+
+valueBindingName :: Decl -> Maybe (Text, SourceSpan)
+valueBindingName = \case
+    DValue v ->
+        Just
+            ( lowerText (valueDeclName v)
+            , valueDeclSpan v
+            )
+    DImport (ForeignImport sp _ fname _) ->
+        let
+            name = foreignBindName fname
+        in
+        Just (lowerText name, sp)
+    DExtern (ExternValue sp _ name _ _ _) ->
+        Just (lowerText name, sp)
+    _ -> Nothing
+
+
+duplicateValueDiag :: Text -> SourceSpan -> SourceSpan -> Diagnostic
+duplicateValueDiag name duplicateSpan firstSpan =
+    Diagnostic
+        { diagSeverity = Error
+        , diagCategory = Parse
+        , diagSpan = duplicateSpan
+        , diagMessage =
+            "value "
+                Prelude.<> T.pack (Prelude.show name)
+                Prelude.<> " is already defined"
+        , diagHint =
+            Just
+                ( "Quone values are immutable. Rename this binding, or update the original definition at "
+                    Prelude.<> Position.showSourceSpan firstSpan
+                    Prelude.<> "."
+                )
+        }

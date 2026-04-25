@@ -3,6 +3,7 @@ module Test.ParseTests (suite) where
 import NriPrelude
 import qualified Data.Text as T
 import Quone.Lex.Token (Keyword (..))
+import Quone.Diagnostic (Diagnostic (..))
 import Quone.Parse.Cst
 import Quone.Parse.Parser (parseProgram)
 import qualified Test.Harness as Harness
@@ -50,6 +51,20 @@ suite =
         , Harness.test "parse/rejects_indented_top_level_declaration" <|
             case parseProgram (T.unlines ["type A", "    <- First", "", "b <- First", "    b <- First"]) of
                 Prelude.Left _ -> Prelude.pure Pass
+                other -> Prelude.pure (Fail ("expected parse failure, got: " ++ showText other))
+        , Harness.test "parse/allows_final_bare_expression" <|
+            case parseProgram (T.unlines ["x <- 1", "", "x + 1"]) of
+                Prelude.Right (CProgram {programDecls = [CDValue v], programFinalExpr = Just (CEBinOp _ COpAdd _ _)}) ->
+                    Prelude.pure (lowerNameText (valueDeclName v) === "x")
+                other -> Prelude.pure (Fail ("unexpected parse result: " ++ showText other))
+        , Harness.test "parse/rejects_non_final_bare_expression_with_rule" <|
+            case parseProgram (T.unlines ["x <- 1", "", "x", "", "y <- 2"]) of
+                Prelude.Left Diagnostic {diagMessage = msg, diagHint = Just hint} ->
+                    if "bare expressions are only allowed at the end of a script" `T.isInfixOf` msg
+                        && "bind it with `<-`" `T.isInfixOf` hint then
+                        Prelude.pure Pass
+                    else
+                        Prelude.pure (Fail ("unexpected diagnostic: " ++ msg ++ "\n" ++ hint))
                 other -> Prelude.pure (Fail ("expected parse failure, got: " ++ showText other))
         ]
 

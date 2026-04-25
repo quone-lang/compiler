@@ -11,13 +11,13 @@ module Quone.Lsp.Compile
     )
 where
 
-import qualified Data.Text as T
 import NriPrelude
 import Quone.Ast.Source (Program)
 import Quone.Ast.Validate (validate)
 import Quone.Diagnostic (Diagnostic)
 import Quone.Parse.Desugar (desugarFile)
 import Quone.Prelude.Load (LoadedPrelude (..), loadPrelude)
+import qualified Quone.Resolve.Names as Resolve
 import Quone.Type.Infer (TypedProgram, inferProgramFrom)
 import qualified Prelude
 
@@ -39,6 +39,8 @@ compileText filename src =
                 Prelude.Right prog ->
                     case validate prog of
                         ds@(_ : _) -> CompileFailed ds
-                        [] -> case inferProgramFrom (preludeEnv loaded) prog of
-                            Prelude.Left d -> CompileFailed [d]
-                            Prelude.Right (typed, _) -> CompileOk prog typed
+                        [] -> case Resolve.resolveProgram prog of
+                            ds@(_ : _) -> CompileFailed ds
+                            [] -> case inferProgramFrom (preludeEnv loaded) prog of
+                                Prelude.Left d -> CompileFailed [d]
+                                Prelude.Right (typed, _) -> CompileOk prog typed

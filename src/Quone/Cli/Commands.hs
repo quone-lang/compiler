@@ -22,24 +22,23 @@ module Quone.Cli.Commands
 where
 
 import qualified Control.Monad as CMonad
-import Data.Foldable (traverse_)
-import qualified Data.List as List
 import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
 import NriPrelude
 import Quone.Ast.Source (Program)
 import Quone.Ast.Validate (validate)
-import qualified Quone.Diagnostic as Diag
 import Quone.Diagnostic
     ( Diagnostic (..)
     , DiagnosticsFormat (..)
     , render
+    , renderWithSource
     )
 import qualified Quone.Diagnostic.Json as DiagJson
 import qualified Quone.Format.Format as Fmt
 import Quone.Generate.R (generateProgram)
 import Quone.Parse.Desugar (desugarFile)
 import Quone.Prelude.Load (LoadedPrelude (..), loadPrelude)
+import qualified Quone.Resolve.Names as Resolve
 import Quone.Type.Infer
     ( inferProgramFrom
     )
@@ -64,7 +63,7 @@ cmdCheck fmt path = do
     src <- TIO.readFile path
     case compileScript (T.pack path) src of
         Prelude.Left d -> do
-            emitDiagnostic fmt d
+            emitDiagnosticWithSource fmt src d
             Prelude.pure (Exit.ExitFailure 1)
         Prelude.Right _ ->
             case fmt of
@@ -88,7 +87,7 @@ cmdBuild fmt outDir path = do
     src <- TIO.readFile path
     case compileScript (T.pack path) src of
         Prelude.Left d -> do
-            emitDiagnostic fmt d
+            emitDiagnosticWithSource fmt src d
             Prelude.pure (Exit.ExitFailure 1)
         Prelude.Right (_prog, rcode) -> do
             let
@@ -136,7 +135,7 @@ formatFile path = do
     src <- TIO.readFile path
     case Fmt.format (T.pack path) src of
         Prelude.Left d -> do
-            emitDiagnostic HumanDiagnostics d
+            emitDiagnosticWithSource HumanDiagnostics src d
             Prelude.pure (Exit.ExitFailure 1)
         Prelude.Right out -> do
             CMonad.when (out Prelude./= src) (TIO.writeFile path out)
@@ -154,7 +153,7 @@ combineExit :: [Exit.ExitCode] -> Exit.ExitCode
 combineExit = Prelude.foldr step Exit.ExitSuccess
   where
     step Exit.ExitSuccess acc = acc
-    step e _ = e
+    step code _ = code
 
 
 -- ---------------------------------------------------------------------
@@ -166,6 +165,12 @@ combineExit = Prelude.foldr step Exit.ExitSuccess
 emitDiagnostic :: DiagnosticsFormat -> Diagnostic -> Prelude.IO ()
 emitDiagnostic fmt d = case fmt of
     HumanDiagnostics -> TIO.hPutStrLn IO.stderr (render d)
+    JsonDiagnostics -> TIO.hPutStrLn IO.stderr (DiagJson.encodeDiagnostic d)
+
+
+emitDiagnosticWithSource :: DiagnosticsFormat -> Text -> Diagnostic -> Prelude.IO ()
+emitDiagnosticWithSource fmt source d = case fmt of
+    HumanDiagnostics -> TIO.hPutStrLn IO.stderr (renderWithSource source d)
     JsonDiagnostics -> TIO.hPutStrLn IO.stderr (DiagJson.encodeDiagnostic d)
 
 
@@ -194,6 +199,9 @@ compileScript filename src = do
     loaded <- loadPrelude
     prog <- desugarFile filename src
     case validate prog of
+        (d : _) -> Prelude.Left d
+        [] -> Prelude.pure ()
+    case Resolve.resolveProgram prog of
         (d : _) -> Prelude.Left d
         [] -> Prelude.pure ()
     _typed <- inferProgramFrom (preludeEnv loaded) prog

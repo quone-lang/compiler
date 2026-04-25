@@ -108,6 +108,10 @@ data CProgram = CProgram
     { programSpan :: SourceSpan
     , programModule :: Maybe CModuleDecl
     , programDecls :: [CDecl]
+    , -- | Optional R-style script result. A source file may end with
+      -- one bare expression, which codegen emits as a bare R
+      -- expression so R prints it at script boundaries.
+      programFinalExpr :: Maybe CExpr
     }
     deriving (Prelude.Show, Prelude.Eq)
 

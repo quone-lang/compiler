@@ -41,7 +41,6 @@ module Quone.Resolve.Project
     )
 where
 
-import qualified Data.Char as Char
 import qualified Data.List as List
 import qualified Data.Map.Strict as Map
 import qualified Data.Text as T
@@ -51,7 +50,7 @@ import Quone.Diagnostic
     , Diagnostic (..)
     , Severity (Error)
     )
-import Quone.Position (SourcePos (..), SourceSpan (..), spanFromPos)
+import Quone.Position (SourcePos (..), spanFromPos)
 import qualified System.FilePath as FP
 import qualified Prelude
 
@@ -192,7 +191,7 @@ collectSections lns =
                                 Just (k, v) ->
                                     ( currentSection
                                     , Map.insertWith
-                                        (Prelude.++)
+                                        (Prelude.flip (Prelude.++))
                                         currentSection
                                         [(lineNo, k, v)]
                                         acc

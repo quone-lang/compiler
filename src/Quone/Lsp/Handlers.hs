@@ -103,15 +103,20 @@ diagJson d =
     in
     Json.object
         [ ("severity", Json.int (severityCode (diagSeverity d)))
-        , ("source", Json.str "quonec")
-        , ("message", Json.str (diagMessage d))
-        , ("code", Json.str (Diag.categoryName (diagCategory d)))
+        , ("message", Json.str (diagnosticMessage d))
         , ("range"
           , Json.object
                 [ ("start", positionJson start)
                 , ("end", positionJson finish)
                 ])
         ]
+
+
+diagnosticMessage :: Diagnostic -> Text
+diagnosticMessage d =
+    case diagHint d of
+        Just hint -> diagMessage d ++ "\n\n" ++ hint
+        Nothing -> diagMessage d
 
 
 positionJson :: Position.SourcePos -> Json.Value
@@ -228,9 +233,10 @@ handleHover params state = case lookupContext params state of
             Prelude.Nothing -> Json.VNull
             Just (line, col) ->
                 let
-                    symbols = allSymbols prog typed
+                    localSymbols = Symbols.buildIndex prog typed
+                    symbols = localSymbols Prelude.++ preludeSymbols
                 in
-                case Symbols.symbolAt line col symbols of
+                case Symbols.symbolAt line col localSymbols of
                     Prelude.Nothing ->
                         case wordAt line col (State.docText doc) of
                             Prelude.Nothing -> Json.VNull

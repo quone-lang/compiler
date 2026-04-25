@@ -10,6 +10,7 @@ import qualified Test.LexTests
 import qualified Test.LspTests
 import qualified Test.ParseTests
 import qualified Test.ReleaseTests
+import qualified Test.ResolveTests
 import qualified Test.TypeTests
 import qualified Test.VerbTests
 
@@ -24,6 +25,7 @@ main =
         , Test.GenerateTests.suite
         , Test.FormatTests.suite
         , Test.ExampleTests.suite
+        , Test.ResolveTests.suite
         , Test.LspTests.suite
         , Test.CliTests.suite
         , Test.ReleaseTests.suite

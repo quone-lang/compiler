@@ -71,6 +71,9 @@ data GenEnv = GenEnv
     -- resolves to a foreign import that has a `via "..."` clause,
     -- the generator substitutes @$1@, @$2@, ... in this template
     -- instead of emitting a straight `pkg::fn(args...)`.
+    , geValueArities :: Map.Map Text Prelude.Int
+    -- ^ Quone-defined value functions lower to pipe-friendly R functions:
+    -- the last Quone argument is emitted as the first R argument.
     }
     deriving (Prelude.Show, Prelude.Eq)
 
@@ -83,6 +86,7 @@ emptyGenEnv =
         , geOperatorR = Map.empty
         , geUnaryR = Map.empty
         , geForeignVia = Map.empty
+        , geValueArities = Map.empty
         }
 
 
@@ -125,6 +129,10 @@ buildGenEnv prog =
                 | DImport (ForeignImport _ _ fname _) <- programDecls prog
                 , Just template <- [foreignVia fname]
                 ]
+        , geValueArities =
+            Map.union
+                (collectValueArities prog)
+                preludeValueArities
         }
 
 
@@ -136,6 +144,14 @@ collectExternBodies prog =
     Map.fromList
         [ (lowerText name, body)
         | DExtern (ExternValue _ _ name _ body _) <- programDecls prog
+        ]
+
+
+collectValueArities :: Program -> Map.Map Text Prelude.Int
+collectValueArities prog =
+    Map.fromList
+        [ (lowerText (valueDeclName v), Prelude.length (valueDeclParams v))
+        | DValue v <- programDecls prog
         ]
 
 
@@ -183,6 +199,14 @@ preludeUnaryR =
         Prelude.Left _ -> Map.empty
 
 
+preludeValueArities :: Map.Map Text Prelude.Int
+preludeValueArities =
+    Map.fromList
+        [ (lowerText (valueDeclName v), Prelude.length (valueDeclParams v))
+        | DValue v <- preludeValueDecls
+        ]
+
+
 -- | Produce the @pkg::fn@ form. R packages have a single namespace
 -- separator, so multi-segment package paths collapse to the LAST
 -- segment plus @::@. A two-segment input is the common shape
@@ -227,12 +251,26 @@ generateScript :: Program -> Text
 generateScript prog =
     let
         env = buildGenEnv prog
-        userRefs = collectExprRefs (programDecls prog)
+        userRefs = collectProgramRefs prog
         usedPrelude = preludeValueDeclsUsedBy userRefs
-        decls =
+        declDoc =
             generateDecls env (usedPrelude Prelude.++ programDecls prog)
+        finalDoc =
+            case programFinalExpr prog of
+                Nothing -> empty
+                Just expr -> line (generateExprIn env expr)
     in
-    render decls
+    render (declDoc <+|> finalDoc)
+
+
+collectProgramRefs :: Program -> Set.Set Text
+collectProgramRefs prog =
+    Set.unions
+        ( collectExprRefs (programDecls prog)
+            : case programFinalExpr prog of
+                Nothing -> []
+                Just expr -> [exprRefs expr]
+        )
 
 
 -- | Walk a list of declarations and collect every name referenced
@@ -346,7 +384,7 @@ valueDecl :: GenEnv -> ValueDecl -> Doc
 valueDecl env v =
     let
         body = generateExprIn env (valueDeclBody v)
-        params = Prelude.fmap lowerText (valueDeclParams v)
+        params = toRValueOrder (Prelude.fmap lowerText (valueDeclParams v))
         rendered =
             case params of
                 [] -> body
@@ -504,48 +542,7 @@ generateExprIn env = \case
         let
             (head_, args) = collectApp call
         in
-        case head_ of
-            EVar n
-              | Just template <- Map.lookup (lowerText n) (geForeignVia env) ->
-                  -- The foreign import declared a `via "<template>"`
-                  -- clause (M3.9): substitute @$1@, @$2@, ... in the
-                  -- template with the rendered Quone arguments
-                  -- in source order.
-                  expandViaTemplate
-                    template
-                    (Prelude.fmap (generateExprIn env) args)
-            EVar n
-              | Just body <- Map.lookup (lowerText n) (geExternBodies env) ->
-                  -- The callee was declared in the prelude as an
-                  -- `extern` value: look up its R body and emit
-                  -- `<r>(args...)`. Replaces the legacy if_else
-                  -- special case (LANGUAGE.md sections 10, 8.7).
-                  externCall env body args
-            EVar n ->
-                -- Foreign imports of `purrr::*` family functions
-                -- expect the data first (`.x`), function second
-                -- (`.f`), even though Quone's curry order puts the
-                -- function first (`map fn xs`). Swap when the
-                -- qualified name needs it (KNOWN_FAILURES #3).
-                -- Promoted to `import ... via "..."` in M3, which
-                -- generalises this to any foreign import.
-                let
-                    resolved = resolvedName env n
-                    rendered = Prelude.fmap (generateExprIn env) args
-                    finalArgs = if needsPurrrSwap resolved Prelude.&& Prelude.length rendered Prelude.>= 2
-                        then case rendered of
-                            (fn : xs : rest) -> xs : fn : rest
-                            _ -> rendered
-                        else rendered
-                in
-                callR resolved finalArgs
-            ECon n ->
-                -- Constructor application: build the tagged list
-                -- representation directly. The case-pattern lowering
-                -- (see `patternToTest`) reads from the same shape:
-                -- `list(tag = "Just", values = list(arg1, arg2, ...))`.
-                conApply n (Prelude.fmap (generateExprIn env) args)
-            _ -> callR (renderCallHead env head_) (Prelude.fmap (generateExprIn env) args)
+        renderApplication env head_ args (Prelude.fmap (generateExprIn env) args)
     EBinOp _ op l r ->
         renderBinary env op l r
     EUnary _ op e ->
@@ -679,25 +676,28 @@ conApply n args = case upperText n of
 --     @map fn xs@ order.
 externCall :: GenEnv -> ExternBody -> [Expr] -> Text
 externCall env body args =
+    externCallRendered env body args (Prelude.fmap (generateExprIn env) args)
+
+
+externCallRendered :: GenEnv -> ExternBody -> [Expr] -> [Text] -> Text
+externCallRendered _env body args renderedArgs =
     case body of
         ExternSimple _ r ->
-            callR (parenthesiseIfFn r) (Prelude.fmap (generateExprIn env) args)
+            callR (parenthesiseIfFn r) renderedArgs
         ExternDispatch _ r _dispatchOn ->
             -- Curried Quone signature: `map fn xs`. R's purrr::map
             -- takes `(.x, .f)`. Swap the first two arguments and
             -- pick the type suffix from the function body.
-            case args of
-                (fn : xs : rest) ->
+            case (args, renderedArgs) of
+                (fn : _, fnText : xsText : restText) ->
                     let
                         suffix = mapSuffix fn
-                        renderedArgs =
-                            Prelude.fmap (generateExprIn env) (xs : fn : rest)
                     in
-                    callR (r Prelude.<> suffix) renderedArgs
+                    callR (r Prelude.<> suffix) (xsText : fnText : restText)
                 _ ->
                     -- Underapplied: fall back to the verbatim form so
                     -- the resulting R is at least syntactically valid.
-                    callR r (Prelude.fmap (generateExprIn env) args)
+                    callR r renderedArgs
 
 
 externValueR :: ExternBody -> Text
@@ -1047,6 +1047,62 @@ collectApp = go []
     go acc other = (other, acc)
 
 
+renderApplication :: GenEnv -> Expr -> [Expr] -> [Text] -> Text
+renderApplication env head_ args renderedArgs =
+    case head_ of
+        EVar n
+          | Just template <- Map.lookup (lowerText n) (geForeignVia env) ->
+              -- The foreign import declared a `via "<template>"`
+              -- clause (M3.9): substitute @$1@, @$2@, ... in the
+              -- template with the rendered Quone arguments in source order.
+              expandViaTemplate template renderedArgs
+        EVar n
+          | Just body <- Map.lookup (lowerText n) (geExternBodies env) ->
+              -- The callee was declared in the prelude as an `extern` value:
+              -- look up its R body and emit `<r>(args...)`.
+              externCallRendered env body args renderedArgs
+        EVar n ->
+            -- Foreign imports of `purrr::*` family functions expect the data
+            -- first (`.x`), function second (`.f`), even though Quone's curry
+            -- order puts the function first (`map fn xs`). Swap when needed.
+            let
+                resolved = resolvedName env n
+                callArgs = reorderQuoneValueArgs env n renderedArgs
+                finalArgs = if needsPurrrSwap resolved Prelude.&& Prelude.length callArgs Prelude.>= 2
+                    then case callArgs of
+                        (fn : xs : rest) -> xs : fn : rest
+                        _ -> callArgs
+                    else callArgs
+            in
+            callR resolved finalArgs
+        ECon n ->
+            -- Constructor application: build the tagged list representation
+            -- directly. The case-pattern lowering reads from the same shape.
+            conApply n renderedArgs
+        _ -> callR (renderCallHead env head_) renderedArgs
+
+
+reorderQuoneValueArgs :: GenEnv -> LowerName -> [Text] -> [Text]
+reorderQuoneValueArgs env n args =
+    let
+        name = lowerText n
+    in
+    case Map.lookup name (geValueArities env) of
+        Just arity
+          | arity Prelude.> 1
+              Prelude.&& Prelude.length args Prelude.== arity
+              Prelude.&& Prelude.not (Map.member name (gePkgQualifiers env)) ->
+              toRValueOrder args
+        _ -> args
+
+
+toRValueOrder :: [Text] -> [Text]
+toRValueOrder args =
+    case Prelude.reverse args of
+        [] -> []
+        lastArg : restReversed -> lastArg : Prelude.reverse restReversed
+
+
 listCall :: GenEnv -> [FieldBinding] -> Text
 listCall env fields = "list(" Prelude.<> namedFields env fields Prelude.<> ")"
 
@@ -1098,14 +1154,12 @@ isLogicalIfShape arms = case arms of
 
 
 ifShape :: GenEnv -> Expr -> [CaseArm] -> Text
-ifShape env scrut arms =
+ifShape env scrut [a, b] =
     let
         (trueArm, falseArm) =
-            case arms of
-                [a, b] -> case caseArmPattern a of
-                    PCon _ n [] | upperText n Prelude.== "True" -> (a, b)
-                    _ -> (b, a)
-                _ -> (Prelude.head arms, Prelude.head arms)
+            case caseArmPattern a of
+                PCon _ n [] | upperText n Prelude.== "True" -> (a, b)
+                _ -> (b, a)
     in
     "if ("
         Prelude.<> generateExprIn env scrut
@@ -1113,65 +1167,133 @@ ifShape env scrut arms =
         Prelude.<> generateExprIn env (caseArmBody trueArm)
         Prelude.<> " else "
         Prelude.<> generateExprIn env (caseArmBody falseArm)
+ifShape env scrut arms =
+    chainShape env scrut arms
 
 
--- | The general case lowering: bind the scrutinee, then a chain of
--- @if (...) { body } else if (...) { body } else stop("non-exhaustive")@.
+-- | The general case lowering. Keep the common no-binding case close
+-- to idiomatic R: an @if@ chain is itself an expression, so callers
+-- can assign it directly. Pattern forms that introduce variables use
+-- a small block with a readable temporary.
 chainShape :: GenEnv -> Expr -> [CaseArm] -> Text
 chainShape env scrut arms =
     let
-        scrutVar = "._scrutinee"
-        scrutBind = scrutVar Prelude.<> " <- " Prelude.<> generateExprIn env scrut
-        chain = buildChain env scrutVar arms
+        scrutText = generateExprIn env scrut
+        needsTemp =
+            T.any (Prelude.== '\n') scrutText
+                Prelude.|| (Prelude.not (caseScrutineeIsSimple scrut)
+                    Prelude.&& Prelude.any (armHasPatternBinds "case_value") arms)
     in
-    "{ " Prelude.<> scrutBind Prelude.<> "; " Prelude.<> chain Prelude.<> " }"
+    if needsTemp
+        then
+            T.intercalate
+                "\n"
+                ( [ "{"
+                  , "  case_value <- " Prelude.<> scrutText
+                  , ""
+                  ]
+                    Prelude.++ indentTextBlock 2 (buildChain env "case_value" arms)
+                    Prelude.++ ["}"]
+                )
+        else buildChain env scrutText arms
 
 
 buildChain :: GenEnv -> Text -> [CaseArm] -> Text
-buildChain env scrutVar = go
+buildChain env scrutText =
+    renderIfChain Prelude.. chainLines
   where
-    go [] = "stop(\"non-exhaustive case\")"
-    go (a : rest) =
+    chainLines [] =
+        [ IfArm
+            { ifArmPredicate = Nothing
+            , ifArmLines = ["stop(\"non-exhaustive case\")"]
+            }
+        ]
+    chainLines (a : rest) =
         let
-            (test, binds) = patternToTest scrutVar (caseArmPattern a)
+            (test, binds) = patternToTest scrutText (caseArmPattern a)
             armBody = generateExprIn env (caseArmBody a)
-            -- Pattern guard (M3.3): the arm only fires if the
-            -- pattern matches AND the guard evaluates to TRUE. The
-            -- guard sees the pattern's bindings, so it must be
-            -- emitted INSIDE the bind block (after binds, before
-            -- the body), not as part of the outer pattern test.
-            guardedBody = case caseArmGuard a of
-                Nothing -> armBody
+            bodyLines = binds Prelude.++ T.lines armBody
+            guardedLines = case caseArmGuard a of
+                Nothing -> bodyLines
                 Just g ->
-                    -- `if (guard) body else <fallthrough>`. The else
-                    -- branch falls through to the next arm.
-                    "if ("
-                        Prelude.<> generateExprIn env g
-                        Prelude.<> ") "
-                        Prelude.<> armBody
-                        Prelude.<> " else "
-                        Prelude.<> go rest
-            body =
-                if Prelude.null binds
-                    then guardedBody
-                    else
-                        "{ "
-                            Prelude.<> sepBy "; " (binds Prelude.++ [guardedBody])
-                            Prelude.<> " }"
+                    -- The guard sees pattern bindings, so it must run
+                    -- inside this arm. On guard-false, fall through to
+                    -- the remaining arms.
+                    binds
+                        Prelude.++ T.lines
+                            ( renderIfChain
+                                [ IfArm
+                                    { ifArmPredicate = Just (generateExprIn env g)
+                                    , ifArmLines = T.lines armBody
+                                    }
+                                , IfArm
+                                    { ifArmPredicate = Nothing
+                                    , ifArmLines = T.lines (buildChain env scrutText rest)
+                                    }
+                                ]
+                            )
         in
-        case test of
-            Just predicate ->
-                "if ("
+        IfArm
+            { ifArmPredicate = test
+            , ifArmLines = guardedLines
+            }
+            : chainLines rest
+
+
+data IfArm = IfArm
+    { ifArmPredicate :: Maybe Text
+    , ifArmLines :: [Text]
+    }
+
+
+renderIfChain :: [IfArm] -> Text
+renderIfChain arms =
+    T.intercalate "\n" (go Prelude.True arms)
+  where
+    go _ [] = []
+    go isFirst [IfArm Prelude.Nothing bodyLines] =
+        let
+            head_ = if isFirst then "else {" else "} else {"
+        in
+        head_
+            : indentLines 2 bodyLines
+            Prelude.++ ["}"]
+    go isFirst (IfArm (Just predicate) bodyLines : rest) =
+        let
+            head_ =
+                (if isFirst then "if (" else "} else if (")
                     Prelude.<> predicate
-                    Prelude.<> ") "
-                    Prelude.<> body
-                    Prelude.<> case rest of
-                        [] -> ""
-                        _ -> " else " Prelude.<> go rest
-            Nothing ->
-                -- Wildcard / variable pattern: unconditional match.
-                -- If there's a guard, fall through on guard-false.
-                body
+                    Prelude.<> ") {"
+            close = case rest of
+                [] -> ["}"]
+                _ -> []
+        in
+        head_
+            : indentLines 2 bodyLines
+            Prelude.++ close
+            Prelude.++ go Prelude.False rest
+    go isFirst (IfArm Prelude.Nothing bodyLines : _rest) =
+        go isFirst [IfArm Prelude.Nothing bodyLines]
+
+
+indentLines :: Prelude.Int -> [Text] -> [Text]
+indentLines n =
+    Prelude.fmap (T.replicate (Prelude.fromIntegral n) " " Prelude.<>)
+
+
+armHasPatternBinds :: Text -> CaseArm -> Prelude.Bool
+armHasPatternBinds scrutText arm =
+    let
+        (_, binds) = patternToTest scrutText (caseArmPattern arm)
+    in
+    Prelude.not (Prelude.null binds)
+
+
+caseScrutineeIsSimple :: Expr -> Prelude.Bool
+caseScrutineeIsSimple = \case
+    EVar _ -> Prelude.True
+    EField _ base _ -> caseScrutineeIsSimple base
+    _ -> Prelude.False
 
 
 -- | Translate a pattern into (R predicate, binding statements).

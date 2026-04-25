@@ -37,6 +37,7 @@ import Quone.Ast.Source
     , Program (..)
     , ValueDecl (..)
     , declSpan
+    , exprSpan
     )
 import Quone.Position
     ( SourcePos (..)
@@ -74,7 +75,11 @@ data Entry = Entry
 buildSourceMap :: Program -> [Entry]
 buildSourceMap prog =
     let
-        spans = Prelude.fmap declSpan (programDecls prog)
+        spans =
+            Prelude.fmap declSpan (programDecls prog)
+                Prelude.++ case programFinalExpr prog of
+                    Nothing -> []
+                    Just expr -> [exprSpan expr]
     in
     Prelude.zipWith mkEntry [1 ..] spans
   where

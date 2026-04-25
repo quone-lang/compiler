@@ -43,7 +43,7 @@ import Quone.Diagnostic
     , Severity (Error)
     )
 import qualified Quone.Parse.Desugar as Desugar
-import Quone.Position (SourceSpan, emptySpan)
+import Quone.Position (SourcePos (..), SourceSpan (..), emptySpan)
 import qualified Quone.Prelude.Embed as Embed
 import Quone.Type.Env
 import Quone.Type.Types
@@ -74,16 +74,13 @@ data TypedProgram = TypedProgram
 -- Callers that want to thread their own starting environment (e.g.
 -- for incremental compilation) should prefer 'inferProgramFrom'.
 inferProgram :: Program -> Prelude.Either Diagnostic TypedProgram
-inferProgram prog =
+inferProgram prog = do
+    -- Compute the prelude env once at module load (this binding is a
+    -- CAF: GHC memoises it). A malformed prelude is a compiler-
+    -- development bug, but direct API callers should see the same
+    -- failure that CLI/LSP entrypoints surface.
+    seedEnv <- loadPreludeEnv
     Prelude.fmap Prelude.fst (inferProgramFrom seedEnv prog)
-  where
-    -- Compute the prelude env once at module load (this binding is
-    -- a CAF: GHC memoises it). A malformed prelude is a compiler-
-    -- development bug; falling back to 'initialEnv' keeps callers
-    -- that swallow diagnostics able to see at least primitive types.
-    seedEnv = case loadPreludeEnv of
-        Prelude.Right e -> e
-        Prelude.Left _ -> initialEnv
 
 
 -- | Load and type-check the embedded prelude, returning its final
@@ -116,7 +113,10 @@ inferProgramFrom seedEnv prog =
     let
         env = registerCustomTypes seedEnv (programDecls prog)
     in
-    case runInfer (inferDecls env (programDecls prog)) of
+    case runInfer (do
+        (binds, finalEnv) <- inferDecls env (programDecls prog)
+        inferFinalExpr finalEnv (programFinalExpr prog)
+        Prelude.pure (binds, finalEnv)) of
         Prelude.Left d -> Prelude.Left d
         Prelude.Right (binds, finalEnv) ->
             Prelude.Right
@@ -367,12 +367,22 @@ typeAtomToType params = \case
                 -- free type variable from the signature via
                 -- 'collectSigTVars' so each name gets a unique
                 -- 'tyVarId'; this branch only fires if a caller
-                -- forgets, in which case all unrecognised names share
-                -- id 0 and risk collision (M2.3).
-                TyVarT (mkTyVar 0 (lowerText n))
+                -- forgets. Use the source location as an internal id
+                -- so two unrecognised names do not collapse together
+                -- as the old id-0 fallback did (M2.3).
+                TyVarT (unknownTypeVar n)
     TParen _ inner -> typeSigToType params inner
     TRecord r -> TyRecord (recordFields params r)
     TDataframe _ r -> TyDataframe (ungroupedDf (dataframeFields params r))
+
+
+unknownTypeVar :: LowerName -> TyVar
+unknownTypeVar n =
+    let
+        SourcePos {posLine = line, posCol = col} = spanStart (lowerSpan n)
+        internalId = 1000000 Prelude.+ (line Prelude.* 1000) Prelude.+ col
+    in
+    mkTyVar (Prelude.negate internalId) (lowerText n)
 
 
 typeSigToType :: [TyVar] -> TypeSig -> Type
@@ -456,6 +466,17 @@ inferDecls env decls = do
                     (Map.keys holes)
                 )
     Prelude.pure (binds, regeneralised)
+
+
+inferFinalExpr :: Env -> Maybe Expr -> Infer ()
+inferFinalExpr env = \case
+    Nothing ->
+        Prelude.pure ()
+    Just expr -> do
+        _ <- inferExprIn env expr
+        -- Treat the final script expression like a declaration boundary
+        -- for numeric defaulting, even though it does not bind a name.
+        defaultPendingNumerics
 
 
 -- | Re-run generalisation on every top-level value binding using the
@@ -682,8 +703,34 @@ inferValueBody env v =
                         env
                         (Prelude.zip params paramTys)
             bodyTy <- inferExprIn env' (valueDeclBody v)
-            _ <- unifyAt (valueDeclSpan v) returnTy bodyTy
+            _ <- unifyAnnotatedReturn v returnTy bodyTy
             Prelude.pure annTy
+
+
+unifyAnnotatedReturn :: ValueDecl -> Type -> Type -> Infer ()
+unifyAnnotatedReturn v expected actual = do
+    sub <- getSubst
+    let
+        expected' = applySubst sub expected
+        actual' = applySubst sub actual
+    case unify expected' actual' of
+        Just newSub -> putSubst (newSub @@ sub)
+        Nothing ->
+            inferFail
+                ( annotationMismatchDiag v expected' actual'
+                )
+
+
+annotationMismatchDiag :: ValueDecl -> Type -> Type -> Diagnostic
+annotationMismatchDiag v expected actual =
+    expectedActualTypeDiag
+        (exprSpan (valueDeclBody v))
+        "The type annotation does not match the definition's value:"
+        "The definition's value is:"
+        "But the type annotation says it must be:"
+        expected
+        actual
+        Nothing
 
 
 -- | Strip @n@ argument positions off a function type, returning the
@@ -882,7 +929,7 @@ inferExprIn env = \case
         ft <- inferExprIn env f
         xt <- inferExprIn env x
         result <- freshVar "app_result"
-        _ <- unifyAt sp ft (TyFun xt result)
+        _ <- unifyApplication sp f x ft xt result
         sub <- getSubst
         Prelude.pure (applySubst sub result)
     EBinOp sp op l r -> inferBinOp env sp op l r
@@ -910,7 +957,7 @@ inferExprIn env = \case
                 -- Generic pipe: xs |> f desugars to f xs at the type level.
                 rt <- inferExprIn env rhs
                 result <- freshVar "pipe_result"
-                _ <- unifyAt sp rt (TyFun lt result)
+                _ <- unifyPipe sp rhs rt lt result
                 sub2 <- getSubst
                 Prelude.pure (applySubst sub2 result)
     EField sp record fname -> do
@@ -1719,6 +1766,43 @@ instantiateConstructor info = do
     Prelude.pure (Prelude.foldr TyFun resultTy argTys)
 
 
+-- | Unify a source-level function application, keeping enough context
+-- to explain the mismatch in terms of "this argument" instead of the
+-- inferred function type that the generic unifier sees.
+unifyApplication :: SourceSpan -> Expr -> Expr -> Type -> Type -> Type -> Infer ()
+unifyApplication sp fn arg fnTy argTy resultTy = do
+    sub <- getSubst
+    let
+        fnTy' = applySubst sub fnTy
+        argTy' = applySubst sub argTy
+        resultTy' = applySubst sub resultTy
+        expectedCall = TyFun argTy' resultTy'
+    case unify fnTy' expectedCall of
+        Just newSub -> putSubst (newSub @@ sub)
+        Nothing ->
+            inferFail
+                ( applicationTypeMismatchDiag sp fn arg fnTy' argTy'
+                )
+
+
+-- | Unify the generic pipe form @value |> fn@ as @fn value@, but report
+-- failures using the surface pipe shape.
+unifyPipe :: SourceSpan -> Expr -> Type -> Type -> Type -> Infer ()
+unifyPipe sp fn fnTy pipedTy resultTy = do
+    sub <- getSubst
+    let
+        fnTy' = applySubst sub fnTy
+        pipedTy' = applySubst sub pipedTy
+        resultTy' = applySubst sub resultTy
+        expectedCall = TyFun pipedTy' resultTy'
+    case unify fnTy' expectedCall of
+        Just newSub -> putSubst (newSub @@ sub)
+        Nothing ->
+            inferFail
+                ( pipeTypeMismatchDiag sp fn fnTy' pipedTy'
+                )
+
+
 
 -- ---------------------------------------------------------------------
 -- Diagnostics
@@ -1734,6 +1818,225 @@ typeMismatchDiag sp msg =
         , diagMessage = msg
         , diagHint = Nothing
         }
+
+
+applicationTypeMismatchDiag :: SourceSpan -> Expr -> Expr -> Type -> Type -> Diagnostic
+applicationTypeMismatchDiag sp fn arg fnTy argTy =
+    case fnTy of
+        TyFun expectedArg _ ->
+            let
+                ctx = applicationContext fn
+            in
+            expectedActualTypeDiag
+                sp
+                (applicationMessage ctx)
+                (argumentActualLabel arg)
+                (applicationExpectedLabel ctx)
+                expectedArg
+                argTy
+                (vectorArgumentExtra ctx expectedArg argTy)
+        _ ->
+            Diagnostic
+                { diagSeverity = Error
+                , diagCategory = TypeMismatch
+                , diagSpan = exprSpan fn
+                , diagMessage = "This value is being used as a function, but it is not one:"
+                , diagHint =
+                    Just
+                        ( T.intercalate
+                            "\n\n"
+                            [ "This value has type:"
+                            , indentType fnTy
+                            , "But function calls need a value whose type looks like:"
+                            , "    argument -> result"
+                            ]
+                        )
+                }
+
+
+pipeTypeMismatchDiag :: SourceSpan -> Expr -> Type -> Type -> Diagnostic
+pipeTypeMismatchDiag sp fn fnTy pipedTy =
+    case fnTy of
+        TyFun expectedArg _ ->
+            expectedActualTypeDiag
+                sp
+                "The function after `|>` cannot handle the piped value:"
+                "The piped value is:"
+                "But the function after `|>` needs:"
+                expectedArg
+                pipedTy
+                Nothing
+        _ ->
+            Diagnostic
+                { diagSeverity = Error
+                , diagCategory = TypeMismatch
+                , diagSpan = exprSpan fn
+                , diagMessage = "The right side of `|>` must be a function:"
+                , diagHint =
+                    Just
+                        ( T.intercalate
+                            "\n\n"
+                            [ "This value has type:"
+                            , indentType fnTy
+                            , "But `|>` sends the value on the left into a function on the right."
+                            ]
+                        )
+                }
+
+
+expectedActualTypeDiag
+    :: SourceSpan
+    -> Text
+    -> Text
+    -> Text
+    -> Type
+    -> Type
+    -> Maybe Text
+    -> Diagnostic
+expectedActualTypeDiag sp message actualLabel expectedLabel expected actual extra =
+    Diagnostic
+        { diagSeverity = Error
+        , diagCategory = TypeMismatch
+        , diagSpan = sp
+        , diagMessage = message
+        , diagHint =
+            Just
+                ( T.intercalate
+                    "\n\n"
+                    ( [ actualLabel
+                      , indentType actual
+                      , expectedLabel
+                      , indentType expected
+                      ]
+                        ++ maybeToList extra
+                    )
+                )
+        }
+
+
+data ApplicationContext = ApplicationContext
+    { appCallee :: Maybe Text
+    , appArgIndex :: Prelude.Int
+    }
+
+
+applicationContext :: Expr -> ApplicationContext
+applicationContext fn =
+    let
+        (root, args) = applicationParts fn
+    in
+    ApplicationContext
+        { appCallee = callableName root
+        , appArgIndex = Prelude.length args Prelude.+ 1
+        }
+
+
+applicationParts :: Expr -> (Expr, [Expr])
+applicationParts = \case
+    EApp _ f x ->
+        let
+            (root, args) = applicationParts f
+        in
+        (root, args ++ [x])
+    other -> (other, [])
+
+
+applicationMessage :: ApplicationContext -> Text
+applicationMessage ctx =
+    case appCallee ctx of
+        Just name ->
+            "The "
+                ++ ordinal (appArgIndex ctx)
+                ++ " argument to `"
+                ++ name
+                ++ "` is not what I expect:"
+        Nothing ->
+            "The "
+                ++ ordinal (appArgIndex ctx)
+                ++ " argument to this function is not what I expect:"
+
+
+applicationExpectedLabel :: ApplicationContext -> Text
+applicationExpectedLabel ctx =
+    case appCallee ctx of
+        Just name ->
+            "But `"
+                ++ name
+                ++ "` needs the "
+                ++ ordinal (appArgIndex ctx)
+                ++ " argument to be:"
+        Nothing ->
+            "But this function needs the "
+                ++ ordinal (appArgIndex ctx)
+                ++ " argument to be:"
+
+
+argumentActualLabel :: Expr -> Text
+argumentActualLabel arg =
+    case expressionCallName arg of
+        Just name -> "This `" ++ name ++ "` call produces:"
+        Nothing -> "This argument is:"
+
+
+expressionCallName :: Expr -> Maybe Text
+expressionCallName expr =
+    let
+        (root, args) = applicationParts expr
+    in
+    case args of
+        [] -> Nothing
+        _ -> callableName root
+
+
+ordinal :: Prelude.Int -> Text
+ordinal n =
+    let
+        suffix =
+            if n `Prelude.mod` 100 `List.elem` [11, 12, 13]
+                then "th"
+                else case n `Prelude.mod` 10 of
+                    1 -> "st"
+                    2 -> "nd"
+                    3 -> "rd"
+                    _ -> "th"
+    in
+    T.pack (Prelude.show n) ++ suffix
+
+
+callableName :: Expr -> Maybe Text
+callableName = \case
+    EVar n -> Just (lowerText n)
+    ECon n -> Just (upperText n)
+    EField _ _ n -> Just (lowerText n)
+    _ -> Nothing
+
+
+vectorArgumentExtra :: ApplicationContext -> Type -> Type -> Maybe Text
+vectorArgumentExtra ctx expected actual =
+    case (appCallee ctx, expected, actual) of
+        (Just name, TyApp (TyCon "Vector") inner, other)
+            | inner Prelude.== other Prelude.&& inner Prelude.== primDouble ->
+                Just
+                    ( T.intercalate
+                        "\n\n"
+                        [ "Hint: `" ++ name ++ "` reduces a vector value. Try passing a vector instead:"
+                        , "    " ++ name ++ " [1]"
+                        , "Or, inside a dataframe summary, pass a vector column:"
+                        , "    " ++ name ++ " score"
+                        ]
+                    )
+        _ -> Nothing
+
+
+indentType :: Type -> Text
+indentType ty =
+    "    " ++ showType ty
+
+
+maybeToList :: Maybe a -> [a]
+maybeToList = \case
+    Just x -> [x]
+    Nothing -> []
 
 
 unboundDiag :: SourceSpan -> Text -> Text -> Diagnostic

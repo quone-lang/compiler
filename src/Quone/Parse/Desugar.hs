@@ -57,11 +57,12 @@ desugarFile filename src =
 
 
 desugar :: C.CProgram -> Program
-desugar (C.CProgram sp mModule decls) =
+desugar (C.CProgram sp mModule decls finalExpr) =
     Program
         { programSpan = sp
         , programModule = Prelude.fmap dModule mModule
         , programDecls = Prelude.fmap dDecl decls
+        , programFinalExpr = Prelude.fmap dExpr finalExpr
         , -- The user-facing parser path always produces non-prelude
           -- programs. The prelude loader sets this flag explicitly
           -- after calling 'desugar'.
