@@ -16,6 +16,7 @@ module Quone.Lsp.Symbols
     , byPrefix
     , renderType
     , renderScheme
+    , renderSignature
     )
 where
 
@@ -214,6 +215,22 @@ renderScheme s =
     renderType (Ty.schemeBody s)
 
 
+renderSignature :: Text -> Ty.Scheme -> Text
+renderSignature name scheme =
+    let
+        body =
+            Ty.schemeBody scheme
+    in
+    if typeNeedsBlock body
+        then
+            name
+                ++ " :"
+                ++ "\n"
+                ++ indentLines 4 (renderTypeBlock body)
+        else
+            name ++ " : " ++ renderType body
+
+
 tyVarName :: Ty.TyVar -> Text
 tyVarName = Ty.tyVarName
 
@@ -254,3 +271,104 @@ renderRecord m =
         (Prelude.fmap
             (\(k, v) -> k ++ " : " ++ renderType v)
             (Map.toAscList m))
+
+
+typeNeedsBlock :: Ty.Type -> Prelude.Bool
+typeNeedsBlock = \case
+    Ty.TyFun a b -> typeNeedsBlock a Prelude.|| typeNeedsBlock b
+    Ty.TyApp f x -> typeNeedsBlock f Prelude.|| typeNeedsBlock x
+    Ty.TyRecord fs -> recordNeedsBlock fs
+    Ty.TyDataframe shape -> recordNeedsBlock (Ty.dfSchema shape)
+    _ -> Prelude.False
+
+
+recordNeedsBlock :: Map.Map Text Ty.Type -> Prelude.Bool
+recordNeedsBlock fields =
+    Prelude.length (Map.toList fields) Prelude.> 1
+        Prelude.|| Prelude.any typeNeedsBlock (Map.elems fields)
+
+
+renderTypeBlock :: Ty.Type -> Text
+renderTypeBlock ty =
+    T.intercalate "\n" (renderTypeLines ty)
+
+
+renderTypeLines :: Ty.Type -> [Text]
+renderTypeLines ty = case ty of
+    Ty.TyFun _ _ ->
+        let
+            (args, result) =
+                collectFun [] ty
+        in
+        Prelude.concat
+            (Prelude.fmap renderArgLine args)
+            Prelude.++ renderTypeLines result
+    Ty.TyRecord fs ->
+        renderRecordLines fs
+    Ty.TyDataframe shape ->
+        let
+            grouping = case Ty.dfGroupingCols shape of
+                [] -> []
+                gs -> ["grouped by " ++ T.intercalate ", " gs]
+        in
+        "dataframe"
+            : indentTextLines 4 (renderRecordLines (Ty.dfSchema shape))
+            Prelude.++ grouping
+    other ->
+        [renderType other]
+  where
+    collectFun :: [Ty.Type] -> Ty.Type -> ([Ty.Type], Ty.Type)
+    collectFun acc = \case
+        Ty.TyFun a b -> collectFun (acc Prelude.++ [a]) b
+        result -> (acc, result)
+
+    renderArgLine arg =
+        case renderTypeLines arg of
+            [] -> []
+            [line] -> [line ++ " ->"]
+            lines_ ->
+                case Prelude.reverse lines_ of
+                    [] -> []
+                    lastLine : restRev ->
+                        Prelude.reverse restRev Prelude.++ [lastLine ++ " ->"]
+
+
+renderRecordLines :: Map.Map Text Ty.Type -> [Text]
+renderRecordLines fields =
+    case Map.toAscList fields of
+        [] -> ["{ }"]
+        first : rest ->
+            let
+                firstLines =
+                    renderFieldLines "{ " first
+
+                restLines =
+                    Prelude.concatMap (renderFieldLines ", ") rest
+            in
+            firstLines Prelude.++ restLines Prelude.++ ["}"]
+
+
+renderFieldLines :: Text -> (Text, Ty.Type) -> [Text]
+renderFieldLines prefix (name, ty) =
+    let
+        head_ =
+            prefix ++ name ++ " : "
+    in
+    if typeNeedsBlock ty
+        then
+            case renderTypeLines ty of
+                [] -> [head_]
+                first : rest ->
+                    (head_ ++ first) : indentTextLines (Prelude.fromIntegral (T.length head_)) rest
+        else
+            [head_ ++ renderType ty]
+
+
+indentLines :: Int -> Text -> Text
+indentLines n =
+    T.intercalate "\n" Prelude.. indentTextLines n Prelude.. T.splitOn "\n"
+
+
+indentTextLines :: Int -> [Text] -> [Text]
+indentTextLines n =
+    Prelude.fmap (T.replicate (Prelude.fromIntegral n) " " ++)

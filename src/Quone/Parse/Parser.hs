@@ -1461,10 +1461,7 @@ pVerb kw = do
     if kw `Prelude.elem` [KLeftJoin, KRightJoin, KInnerJoin] then
         pJoinVerb s kw
     else do
-        args <- many_ (try_ <| do
-            crossed <- crossedLine
-            when crossed (P (\st -> PErr (parseFail "" st)))
-            pDplyrArg)
+        args <- many_ (try_ pDplyrArg)
         let
             sp = case args of
                 [] -> s
@@ -1540,28 +1537,50 @@ pDplyrArg = do
             -- Could be either { name } records, { col } column lists, or
             -- { lhs = rhs, ... } join targets. We accept all as record
             -- bindings or bare names; resolution decides later.
-            mFirst <- optional_ (try_ pFieldBinding)
-            case mFirst of
-                Just first -> do
-                    rest <- many_ (try_ (expectTok TComma *> pFieldBinding))
-                    e <- expectTok TRBrace
-                    Prelude.pure (CDARecord (unionSpan s e) (first : rest))
+            mModifier <- optional_ (try_ (pModifierBody s))
+            case mModifier of
+                Just modifier -> Prelude.pure (CDAModifier modifier)
                 Nothing -> do
-                    -- bare name list: { name, score, ... }
-                    names <- sepBy expectLowerIdent (expectTok TComma)
-                    e <- expectTok TRBrace
-                    let
-                        fields =
-                            Prelude.fmap
-                                (\n -> CFieldBinding
-                                    (lowerNameSpan n)
-                                    n
-                                    (CEVar n)
-                                )
-                                names
-                    Prelude.pure (CDARecord (unionSpan s e) fields)
+                    mFirst <- optional_ (try_ pFieldBinding)
+                    case mFirst of
+                        Just first -> do
+                            rest <- many_ (try_ (expectTok TComma *> pFieldBinding))
+                            e <- expectTok TRBrace
+                            Prelude.pure (CDARecord (unionSpan s e) (first : rest))
+                        Nothing -> do
+                            -- bare name list: { name, score, ... }
+                            names <- sepBy expectLowerIdent (expectTok TComma)
+                            e <- expectTok TRBrace
+                            let
+                                fields =
+                                    Prelude.fmap
+                                        (\n -> CFieldBinding
+                                            (lowerNameSpan n)
+                                            n
+                                            (CEVar n)
+                                        )
+                                        names
+                            Prelude.pure (CDARecord (unionSpan s e) fields)
         _ ->
             CDAExpr <$> pAccess
+
+
+pModifierBody :: SourceSpan -> P CModifier
+pModifierBody s = do
+    nextSig <- peekSig
+    case locValue nextSig of
+        TKeyword KDesc -> do
+            _ <- expectKeyword KDesc
+            col <- expectLowerIdent
+            e <- expectTok TRBrace
+            Prelude.pure (CMDesc (unionSpan s e) col)
+        TKeyword KAsc -> do
+            _ <- expectKeyword KAsc
+            col <- expectLowerIdent
+            e <- expectTok TRBrace
+            Prelude.pure (CMAsc (unionSpan s e) col)
+        _ ->
+            P (\st -> PErr (parseFail "" st))
 
 
 

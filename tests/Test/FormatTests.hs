@@ -11,20 +11,120 @@ import qualified Prelude
 suite :: Harness.Suite
 suite =
     Harness.describe "format"
-        [ Harness.test "format/idempotent" <|
-            case Format.format "<test>" "x<-1+2" of
-                Prelude.Left d -> Prelude.pure (Fail (T.pack (Prelude.show d)))
-                Prelude.Right once ->
-                    case Format.format "<test>" once of
-                        Prelude.Right twice -> Prelude.pure (twice === once)
-                        Prelude.Left d -> Prelude.pure (Fail (T.pack (Prelude.show d)))
-        , Harness.test "format/preserves_line_comment" <|
-            case Format.format "<test>" "# keep me\nx <- 1" of
-                Prelude.Right out ->
-                    if "# keep me" `T.isInfixOf` out then
-                        Prelude.pure Pass
+        [ Harness.test "format/canonicalizes_whitespace" <|
+            Prelude.pure
+                ( assertFormatted
+                    "x<-1+2"
+                    "x <- 1.0 + 2.0\n"
+                )
+        , Harness.test "format/is_formatted_matches_elm_format_check" <|
+            Prelude.pure
+                ( if Format.isFormatted "<test>" "x<-1+2" then
+                    Fail "unformatted source was reported as formatted"
+                  else if Prelude.not (Format.isFormatted "<test>" "x <- 1.0 + 2.0\n") then
+                    Fail "canonical source was reported as unformatted"
+                  else
+                    Pass
+                )
+        , Harness.test "format/preserves_top_of_file_comment" <|
+            Prelude.pure
+                ( assertFormatted
+                    "# keep me\nx <- 1"
+                    "# keep me\nx <- 1.0\n"
+                )
+        , Harness.test "format/preserves_between_decl_comment" <|
+            Prelude.pure
+                ( assertFormatted
+                    (T.unlines ["x<-1", "# explain y", "y<-2"])
+                    (T.unlines ["x <- 1.0", "", "# explain y", "y <- 2.0"])
+                )
+        , Harness.test "format/short_record_literal_stays_inline" <|
+            Prelude.pure
+                ( assertFormatted
+                    "row<-{a=1,b=2}"
+                    "row <- { a = 1.0, b = 2.0 }\n"
+                )
+        , Harness.test "format/mtcars_pipeline_matches_canonical_output" <|
+            Prelude.pure (assertFormatted mtcarsSource mtcarsExpected)
+        , Harness.test "format/reindents_multiline_pipeline_body" <|
+            Prelude.pure
+                ( assertFormatted
+                    ( T.unlines
+                        [ "demo xs <-"
+                        , "    xs"
+                        , "    |> filter (score > 0)"
+                        , "    |> arrange { desc score }"
+                        ]
+                    )
+                    ( T.unlines
+                        [ "demo xs <-"
+                        , "    xs"
+                        , "        |> filter (score > 0.0)"
+                        , "        |> arrange { desc score }"
+                        ]
+                    )
+                )
+        ]
+
+
+assertFormatted :: Text -> Text -> TestResult
+assertFormatted input expected =
+    case Format.format "<test>" input of
+        Prelude.Left d -> Fail (T.pack (Prelude.show d))
+        Prelude.Right once ->
+            case Format.format "<test>" once of
+                Prelude.Left d -> Fail (T.pack (Prelude.show d))
+                Prelude.Right twice ->
+                    if once Prelude./= expected then
+                        once === expected
+                    else if twice Prelude./= once then
+                        Fail ("not idempotent:\n" ++ once)
+                    else if Prelude.any (\line -> T.length line Prelude.> 80) (T.lines once) then
+                        Fail ("line over 80 columns:\n" ++ once)
                     else
-                        Prelude.pure (Fail ("comment was not preserved: " ++ out))
-                Prelude.Left d -> Prelude.pure (Fail (T.pack (Prelude.show d)))
+                        Pass
+
+
+mtcarsSource :: Text
+mtcarsSource =
+    T.unlines
+        [ "type alias Cars <- dataframe { model : Vector Character, mpg : Vector Double, cyl : Vector Integer, hp : Vector Double, wt : Vector Double }"
+        , ""
+        , "mtcars_demo : Cars -> dataframe { cyl : Vector Integer, n_cars : Vector Integer, avg_mpg : Vector Double, avg_hp : Vector Double }"
+        , "mtcars_demo cars <- cars |> filter (mpg > mean mpg) |> mutate { power_to_weight = hp / wt } |> group_by { cyl } |> summarize { n_cars = count model, avg_mpg = mean mpg, avg_hp = mean hp } |> arrange (desc avg_mpg)"
+        ]
+
+
+mtcarsExpected :: Text
+mtcarsExpected =
+    T.unlines
+        [ "type alias Cars <-"
+        , "    dataframe"
+        , "        { model : Vector Character"
+        , "        , mpg : Vector Double"
+        , "        , cyl : Vector Integer"
+        , "        , hp : Vector Double"
+        , "        , wt : Vector Double"
+        , "        }"
+        , ""
+        , "mtcars_demo :"
+        , "    Cars ->"
+        , "    dataframe"
+        , "        { cyl : Vector Integer"
+        , "        , n_cars : Vector Integer"
+        , "        , avg_mpg : Vector Double"
+        , "        , avg_hp : Vector Double"
+        , "        }"
+        , "mtcars_demo cars <-"
+        , "    cars"
+        , "        |> filter (mpg > mean mpg)"
+        , "        |> mutate { power_to_weight = hp / wt }"
+        , "        |> group_by { cyl }"
+        , "        |> summarize"
+        , "            { n_cars = count model"
+        , "            , avg_mpg = mean mpg"
+        , "            , avg_hp = mean hp"
+        , "            }"
+        , "        |> arrange { desc avg_mpg }"
         ]
 

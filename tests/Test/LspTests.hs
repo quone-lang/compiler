@@ -31,6 +31,10 @@ suite =
             Prelude.pure hoverShowsPreludeDocs
         , Harness.test "lsp/hover_renders_type_variables_readably" <|
             Prelude.pure hoverRendersTypeVariablesReadably
+        , Harness.test "lsp/hover_formats_large_signatures_like_quone" <|
+            Prelude.pure hoverFormatsLargeSignaturesLikeQuone
+        , Harness.test "lsp/hover_shows_dplyr_verb_signature" <|
+            Prelude.pure hoverShowsDplyrVerbSignature
         ]
 
 
@@ -207,4 +211,164 @@ hoverRendersTypeVariablesReadably =
 
         other ->
             Fail ("unexpected map hover payload: " ++ T.pack (Prelude.show other))
+
+
+hoverFormatsLargeSignaturesLikeQuone :: TestResult
+hoverFormatsLargeSignaturesLikeQuone =
+    let
+        uri =
+            "file:///hover-mtcars.Q"
+
+        src =
+            T.unlines
+                [ "type alias Cars <-"
+                , "    dataframe"
+                , "        { model : Vector Character"
+                , "        , mpg : Vector Double"
+                , "        , cyl : Vector Integer"
+                , "        , hp : Vector Double"
+                , "        , wt : Vector Double"
+                , "        }"
+                , ""
+                , "mtcars_demo :"
+                , "    Cars ->"
+                , "    dataframe"
+                , "        { cyl : Vector Integer"
+                , "        , n_cars : Vector Integer"
+                , "        , avg_mpg : Vector Double"
+                , "        , avg_hp : Vector Double"
+                , "        }"
+                , "mtcars_demo cars <-"
+                , "    cars"
+                , "        |> filter (mpg > mean mpg)"
+                , "        |> mutate { power_to_weight = hp / wt }"
+                , "        |> group_by { cyl }"
+                , "        |> summarize"
+                , "            { n_cars = count model"
+                , "            , avg_mpg = mean mpg"
+                , "            , avg_hp = mean hp"
+                , "            }"
+                , "        |> arrange { desc avg_mpg }"
+                ]
+
+        openParams =
+            Json.object
+                [ ( "textDocument"
+                  , Json.object
+                        [ ("uri", Json.str uri)
+                        , ("version", Json.int 1)
+                        , ("text", Json.str src)
+                        ]
+                  )
+                ]
+
+        hoverParams =
+            Json.object
+                [ ( "textDocument"
+                  , Json.object [("uri", Json.str uri)]
+                  )
+                , ( "position"
+                  , Json.object
+                        [ ("line", Json.int 17)
+                        , ("character", Json.int 2)
+                        ]
+                  )
+                ]
+
+        expected =
+            T.unlines
+                [ "mtcars_demo :"
+                , "    Cars ->"
+                , "    dataframe"
+                , "        { avg_hp : Vector Double"
+                , "        , avg_mpg : Vector Double"
+                , "        , cyl : Vector Integer"
+                , "        , n_cars : Vector Integer"
+                , "        }"
+                ]
+
+        (state, _) =
+            Handlers.handleDidOpen openParams State.empty
+
+        hover =
+            Handlers.handleHover hoverParams state
+    in
+    case Json.lookupField "contents" hover of
+        Just contents ->
+            case Json.lookupField "value" contents Prelude.>>= Json.asString of
+                Just value ->
+                    value === T.dropEnd 1 expected
+
+                Prelude.Nothing ->
+                    Fail ("missing hover value: " ++ T.pack (Prelude.show hover))
+
+        other ->
+            Fail ("unexpected mtcars hover payload: " ++ T.pack (Prelude.show other))
+
+
+hoverShowsDplyrVerbSignature :: TestResult
+hoverShowsDplyrVerbSignature =
+    let
+        uri =
+            "file:///hover-verb.Q"
+
+        src =
+            T.unlines
+                [ "type alias Cars <- dataframe { mpg : Vector Double }"
+                , ""
+                , "demo : Cars -> Cars"
+                , "demo cars <- cars |> filter (mpg > mean mpg)"
+                ]
+
+        openParams =
+            Json.object
+                [ ( "textDocument"
+                  , Json.object
+                        [ ("uri", Json.str uri)
+                        , ("version", Json.int 1)
+                        , ("text", Json.str src)
+                        ]
+                  )
+                ]
+
+        hoverParams =
+            Json.object
+                [ ( "textDocument"
+                  , Json.object [("uri", Json.str uri)]
+                  )
+                , ( "position"
+                  , Json.object
+                        [ ("line", Json.int 3)
+                        , ("character", Json.int 23)
+                        ]
+                  )
+                ]
+
+        (state, _) =
+            Handlers.handleDidOpen openParams State.empty
+
+        hover =
+            Handlers.handleHover hoverParams state
+    in
+    case Json.lookupField "contents" hover of
+        Just (Json.VArray [Json.VString doc, signature]) ->
+            let
+                language =
+                    Json.lookupField "language" signature
+                        Prelude.>>= Json.asString
+
+                value =
+                    Json.lookupField "value" signature
+                        Prelude.>>= Json.asString
+            in
+            if language Prelude.== Just "quone"
+                && value Prelude.== Just "filter : Vector Logical -> Dataframe a -> Dataframe a"
+                && "Keep rows" `T.isInfixOf` doc
+            then
+                Pass
+            else
+                Fail ("unexpected verb hover: " ++ T.pack (Prelude.show hover))
+
+        other ->
+            Fail ("unexpected verb hover payload: " ++ T.pack (Prelude.show other))
 

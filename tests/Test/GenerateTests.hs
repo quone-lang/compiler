@@ -29,6 +29,8 @@ suite =
             expectGeneratedContains
                 "passing <- dataframe { name = [\"Ada\"], score = [90] } |> filter (score > 80)"
                 "dplyr::filter(score > 80)"
+        , Harness.test "generate/formats_dataframe_pipeline_readably" <|
+            expectGenerated mtcarsSource mtcarsExpectedR
         ]
 
 
@@ -48,4 +50,34 @@ expectGeneratedContains src expected =
             else
                 Prelude.pure (Fail ("expected generated R to contain: " ++ expected ++ "\nactual:\n" ++ r))
         Prelude.Left d -> Prelude.pure (Fail (T.pack (Prelude.show d)))
+
+
+mtcarsSource :: Text
+mtcarsSource =
+    T.unlines
+        [ "type alias Cars <- dataframe { model : Vector Character, mpg : Vector Double, cyl : Vector Integer, hp : Vector Double, wt : Vector Double }"
+        , ""
+        , "mtcars_demo : Cars -> dataframe { cyl : Vector Integer, n_cars : Vector Integer, avg_mpg : Vector Double, avg_hp : Vector Double }"
+        , "mtcars_demo cars <- cars |> filter (mpg > mean mpg) |> mutate { power_to_weight = hp / wt } |> group_by { cyl } |> summarize { n_cars = count model, avg_mpg = mean mpg, avg_hp = mean hp } |> arrange (desc avg_mpg)"
+        ]
+
+
+mtcarsExpectedR :: Text
+mtcarsExpectedR =
+    T.dropEnd 1
+        ( T.unlines
+            [ "mtcars_demo <- function(cars) {"
+            , "  cars |>"
+            , "    dplyr::filter(mpg > mean(mpg)) |>"
+            , "    dplyr::mutate(power_to_weight = hp / wt) |>"
+            , "    dplyr::group_by(cyl = cyl) |>"
+            , "    dplyr::summarize("
+            , "      n_cars = length(model),"
+            , "      avg_mpg = mean(mpg),"
+            , "      avg_hp = mean(hp)"
+            , "    ) |>"
+            , "    dplyr::arrange(dplyr::desc(avg_mpg))"
+            , "}"
+            ]
+        )
 

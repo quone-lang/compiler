@@ -207,13 +207,6 @@ extractChanged params = do
             Prelude.pure (uri, text, ver)
 
 
-collectDiagnostics :: Text -> Text -> [Diagnostic]
-collectDiagnostics uri text =
-    case Compile.compileText (uriToPath uri) text of
-        Compile.CompileOk _ _ -> []
-        Compile.CompileFailed ds -> ds
-
-
 uriToPath :: Text -> Text
 uriToPath uri =
     case T.stripPrefix "file://" uri of
@@ -248,7 +241,7 @@ handleHover params state = case lookupContext params state of
                                             [ ("contents", hoverContents sym)
                                             , ("range", spanRange (Symbols.symSpan sym))
                                             ]
-                                    [] -> Json.VNull
+                                    [] -> verbHover word
                     Just sym ->
                         Json.object
                             [ ("contents", hoverContents sym)
@@ -295,10 +288,7 @@ hoverContents sym =
                     [ ("language", Json.str "quone")
                     , ("value"
                       , Json.str
-                            ( Symbols.symName sym
-                                ++ " : "
-                                ++ Symbols.renderScheme sch
-                            )
+                            (Symbols.renderSignature (Symbols.symName sym) sch)
                       )
                     ]
             Prelude.Nothing -> Json.str ("`" ++ Symbols.symName sym ++ "`")
@@ -310,6 +300,85 @@ hoverContents sym =
                 [ Json.str (T.intercalate "\n" doc)
                 , sigBlock
                 ]
+
+
+verbHover :: Text -> Json.Value
+verbHover word =
+    case Token.textKeyword word Prelude.>>= verbSignature of
+        Just (doc, sig) ->
+            Json.object
+                [ ( "contents"
+                  , Json.VArray
+                        [ Json.str doc
+                        , Json.object
+                            [ ("language", Json.str "quone")
+                            , ("value", Json.str sig)
+                            ]
+                        ]
+                  )
+                ]
+        Prelude.Nothing -> Json.VNull
+
+
+verbSignature :: Token.Keyword -> Maybe (Text, Text)
+verbSignature = \case
+    Token.KSelect ->
+        Just
+            ( "Keep a subset of columns from a dataframe."
+            , "select : { columns } -> Dataframe a -> Dataframe selected"
+            )
+    Token.KFilter ->
+        Just
+            ( "Keep rows where the predicate is TRUE."
+            , "filter : Vector Logical -> Dataframe a -> Dataframe a"
+            )
+    Token.KMutate ->
+        Just
+            ( "Add or replace columns using vectorized expressions."
+            , "mutate : { new_columns } -> Dataframe a -> Dataframe (a + new_columns)"
+            )
+    Token.KSummarize ->
+        Just
+            ( "Collapse each group to summary columns."
+            , "summarize : { summaries } -> GroupedDataframe keys a -> Dataframe (keys + summaries)"
+            )
+    Token.KGroupBy ->
+        Just
+            ( "Group rows by one or more columns."
+            , "group_by : { keys } -> Dataframe a -> GroupedDataframe keys a"
+            )
+    Token.KUngroup ->
+        Just
+            ( "Remove grouping from a dataframe."
+            , "ungroup : GroupedDataframe keys a -> Dataframe a"
+            )
+    Token.KArrange ->
+        Just
+            ( "Sort rows by one or more columns."
+            , "arrange : { sort_columns } -> Dataframe a -> Dataframe a"
+            )
+    Token.KRename ->
+        Just
+            ( "Rename columns without changing their values."
+            , "rename : { new = old } -> Dataframe a -> Dataframe renamed"
+            )
+    Token.KLeftJoin ->
+        Just
+            ( "Keep all left rows and attach matching right columns."
+            , "left_join : Dataframe b -> { keys } -> Dataframe a -> Dataframe joined"
+            )
+    Token.KRightJoin ->
+        Just
+            ( "Keep all right rows and attach matching left columns."
+            , "right_join : Dataframe b -> { keys } -> Dataframe a -> Dataframe joined"
+            )
+    Token.KInnerJoin ->
+        Just
+            ( "Keep rows whose keys match in both dataframes."
+            , "inner_join : Dataframe b -> { keys } -> Dataframe a -> Dataframe joined"
+            )
+    _ ->
+        Prelude.Nothing
 
 
 -- | Best-effort identifier-at-position lookup. Used by go-to-definition

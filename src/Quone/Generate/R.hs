@@ -350,21 +350,95 @@ valueDecl env v =
             case params of
                 [] -> body
                 ps ->
-                    "function("
-                        Prelude.<> sepBy ", " ps
-                        Prelude.<> ") "
-                        Prelude.<> braces (" " Prelude.<> body Prelude.<> " ")
+                    functionText ps body
         docCommentLines = case valueDeclDoc v of
             Nothing -> []
             Just block ->
                 Prelude.fmap (\l -> "#' " Prelude.<> l) (docLines block)
-        assignLine = lowerText (valueDeclName v) Prelude.<> " <- " Prelude.<> rendered
+        assignLines =
+            prefixFirstLine
+                (lowerText (valueDeclName v) Prelude.<> " <- ")
+                rendered
     in
-    foldLines (docCommentLines Prelude.++ [assignLine])
+    foldLines (docCommentLines Prelude.++ assignLines)
 
 
 foldLines :: [Text] -> Doc
 foldLines = List.foldl' (\d t -> d <+> line t) empty
+
+
+functionText :: [Text] -> Text -> Text
+functionText params body =
+    if T.any (Prelude.== '\n') body then
+        T.dropEnd 1
+            ( T.unlines
+                ( [ "function(" Prelude.<> sepBy ", " params Prelude.<> ") {"
+                  ]
+                    Prelude.++ indentTextBlock 2 body
+                    Prelude.++ [ "}" ]
+                )
+            )
+    else
+        "function("
+            Prelude.<> sepBy ", " params
+            Prelude.<> ") "
+            Prelude.<> braces (" " Prelude.<> body Prelude.<> " ")
+
+
+prefixFirstLine :: Text -> Text -> [Text]
+prefixFirstLine prefix body =
+    case T.lines body of
+        [] -> [prefix]
+        first : rest -> (prefix Prelude.<> first) : rest
+
+
+indentTextBlock :: Prelude.Int -> Text -> [Text]
+indentTextBlock n =
+    Prelude.fmap (T.replicate (Prelude.fromIntegral n) " " Prelude.<>) Prelude.. T.lines
+
+
+renderPipe :: GenEnv -> Expr -> Text
+renderPipe env pipe =
+    case pipeParts pipe of
+        [] -> ""
+        [one] -> generateExprIn env one
+        first : rest ->
+            T.intercalate "\n" (pipeLineGroups first rest)
+  where
+    pipeLineGroups first rest =
+        let
+            renderedFirst = generateExprIn env first
+            renderedRest = Prelude.fmap (generatePipeRhs env) rest
+            withPipes =
+                appendPipeToLastLine renderedFirst
+                    : Prelude.fmap
+                        (indentText 2 Prelude.. appendPipeToLastLine)
+                        (Prelude.init renderedRest)
+            finalPart = case Prelude.reverse renderedRest of
+                [] -> []
+                lastPart : _ -> [indentText 2 lastPart]
+        in
+        withPipes Prelude.++ finalPart
+
+
+pipeParts :: Expr -> [Expr]
+pipeParts = \case
+    EPipe _ lhs rhs -> pipeParts lhs Prelude.++ [rhs]
+    other -> [other]
+
+
+appendPipeToLastLine :: Text -> Text
+appendPipeToLastLine txt =
+    case T.lines txt of
+        [] -> "|>"
+        lines_ ->
+            T.intercalate "\n"
+                (Prelude.init lines_ Prelude.++ [Prelude.last lines_ Prelude.<> " |>"])
+
+
+indentText :: Prelude.Int -> Text -> Text
+indentText n =
+    T.intercalate "\n" Prelude.. indentTextBlock n
 
 
 
@@ -464,8 +538,8 @@ generateExprIn env = \case
         renderBinary env op l r
     EUnary _ op e ->
         unaryOpR env op Prelude.<> renderUnaryOperand env e
-    EPipe _ lhs rhs ->
-        renderPipeLhs env lhs Prelude.<> " |> " Prelude.<> generatePipeRhs env rhs
+    pipe@(EPipe _ _ _) ->
+        renderPipe env pipe
     EField _ record fname ->
         renderFieldBase env record Prelude.<> "$" Prelude.<> lowerText fname
     ERecord _ fields ->
@@ -734,7 +808,7 @@ generatePipeRhs env = \case
         in
         case args of
             [] -> fn Prelude.<> "()"
-            _ -> callR fn (Prelude.fmap (dplyrArgR env) args)
+            _ -> callRMultiline fn (dplyrArgRs env args)
     other -> generateExprIn env other
 
 
@@ -837,13 +911,6 @@ renderFieldBase env base =
     parenthesizeIf
         (exprPrecedence base Prelude.< fieldPrecedence)
         (generateExprIn env base)
-
-
-renderPipeLhs :: GenEnv -> Expr -> Text
-renderPipeLhs env lhs =
-    parenthesizeIf
-        (exprPrecedence lhs Prelude.< pipePrecedence)
-        (generateExprIn env lhs)
 
 
 parenthesizeIf :: Prelude.Bool -> Text -> Text
@@ -1171,6 +1238,65 @@ dplyrArgR env = \case
             Prelude.<> ", by = c("
             Prelude.<> sepBy ", " (Prelude.fmap pairR pairs)
             Prelude.<> ")"
+
+
+dplyrArgRs :: GenEnv -> [DplyrArg] -> [Text]
+dplyrArgRs env =
+    Prelude.concatMap (dplyrArgRItems env)
+
+
+dplyrArgRItems :: GenEnv -> DplyrArg -> [Text]
+dplyrArgRItems env = \case
+    DAExpr e -> [generateExprIn env e]
+    DARecord _ fields -> Prelude.fmap (namedField env) fields
+    DAModifier m -> [modifierR env m]
+    DAJoinOn _ other pairs ->
+        [ generateExprIn env other
+        , "by = c(" Prelude.<> sepBy ", " (Prelude.fmap pairR pairs) Prelude.<> ")"
+        ]
+
+
+namedField :: GenEnv -> FieldBinding -> Text
+namedField env fb =
+    lowerText (fieldBindingName fb)
+        Prelude.<> " = "
+        Prelude.<> generateExprIn env (fieldBindingValue fb)
+
+
+callRMultiline :: Text -> [Text] -> Text
+callRMultiline fn args =
+    let
+        oneLine = callR fn args
+    in
+    if Prelude.length args Prelude.<= 1
+        && T.length oneLine Prelude.<= 80
+        && Prelude.not (Prelude.any (T.any (Prelude.== '\n')) args)
+    then
+        oneLine
+    else
+        T.intercalate "\n"
+            ( [fn Prelude.<> "("]
+                Prelude.++ commaLines args
+                Prelude.++ [")"]
+            )
+
+
+commaLines :: [Text] -> [Text]
+commaLines args =
+    case args of
+        [] -> []
+        _ ->
+            let
+                lastIndex = Prelude.length args Prelude.- 1
+            in
+            Prelude.fmap
+                (\(idx, arg) ->
+                    let
+                        suffix = if idx Prelude.== lastIndex then "" else ","
+                    in
+                    indentText 2 arg Prelude.<> suffix
+                )
+                (Prelude.zip [0 :: Prelude.Int ..] args)
 
 
 modifierR :: GenEnv -> Modifier -> Text

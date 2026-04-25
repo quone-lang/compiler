@@ -15,6 +15,9 @@
   "categories": [
     "Programming Languages"
   ],
+  "activationEvents": [
+    "onLanguage:quone"
+  ],
   "main": "./dist/extension.js",
   "contributes": {
     "languages": [
