@@ -562,11 +562,13 @@ formatExpr = \case
     CEParen _ inner -> text "(" <> formatExpr inner <> text ")"
     CERecord _ fs -> formatRecord fs
     CERecordUpdate _ target fs ->
-        text "{ "
-            <> formatExpr target
-            <+> text "|"
-            <+> hsepCommas (Prelude.fmap formatFieldBinding fs)
-            <> text " }"
+        group
+            ( text "{ "
+                <> formatExpr target
+                <+> text "|"
+                <+> hsepCommas (Prelude.fmap formatFieldBinding fs)
+                <> text " }"
+            )
     CEDataframe _ fs -> text "dataframe " <> formatRecord fs
     CEVector _ es ->
         text "["

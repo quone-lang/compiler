@@ -98,7 +98,10 @@ concatD = Prelude.foldr (<>) empty
 
 
 hsep :: [Doc] -> Doc
-hsep = Prelude.foldr (\a b -> a <+> b) empty
+hsep = \case
+    [] -> empty
+    [d] -> d
+    (d : ds) -> d <+> hsep ds
 
 
 vsep :: [Doc] -> Doc
