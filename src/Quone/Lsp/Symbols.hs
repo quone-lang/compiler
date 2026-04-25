@@ -221,7 +221,7 @@ renderScheme s =
 
 
 tyVarName :: Ty.TyVar -> Text
-tyVarName tv = T.pack (Prelude.show tv)
+tyVarName = Ty.tyVarName
 
 
 -- | Pretty-print a type the way the user wrote it in source.

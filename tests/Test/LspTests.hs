@@ -29,6 +29,8 @@ suite =
             Prelude.pure hoverUsesQuoneMarkedString
         , Harness.test "lsp/hover_shows_prelude_docs" <|
             Prelude.pure hoverShowsPreludeDocs
+        , Harness.test "lsp/hover_renders_type_variables_readably" <|
+            Prelude.pure hoverRendersTypeVariablesReadably
         ]
 
 
@@ -148,4 +150,61 @@ hoverShowsPreludeDocs =
 
         other ->
             Fail ("unexpected prelude hover payload: " ++ T.pack (Prelude.show other))
+
+
+hoverRendersTypeVariablesReadably :: TestResult
+hoverRendersTypeVariablesReadably =
+    let
+        uri =
+            "file:///hover-map.Q"
+
+        src =
+            "x <- map (\\x -> x) [1, 2, 3]"
+
+        openParams =
+            Json.object
+                [ ( "textDocument"
+                  , Json.object
+                        [ ("uri", Json.str uri)
+                        , ("version", Json.int 1)
+                        , ("text", Json.str src)
+                        ]
+                  )
+                ]
+
+        hoverParams =
+            Json.object
+                [ ( "textDocument"
+                  , Json.object [("uri", Json.str uri)]
+                  )
+                , ( "position"
+                  , Json.object
+                        [ ("line", Json.int 0)
+                        , ("character", Json.int 6)
+                        ]
+                  )
+                ]
+
+        (state, _) =
+            Handlers.handleDidOpen openParams State.empty
+
+        hover =
+            Handlers.handleHover hoverParams state
+    in
+    case Json.lookupField "contents" hover of
+        Just (Json.VArray [signature, _]) ->
+            case Json.lookupField "value" signature Prelude.>>= Json.asString of
+                Just value ->
+                    if "TyVar" `T.isInfixOf` value then
+                        Fail ("hover leaked internal TyVar: " ++ value)
+                    else if value Prelude.== "map : forall b a. (a -> b) -> (Vector a) -> Vector b" then
+                        Pass
+                    else
+                        Fail ("unexpected map hover: " ++ value)
+
+                Prelude.Nothing ->
+                    Fail ("missing hover value: " ++ T.pack (Prelude.show hover))
+
+        other ->
+            Fail ("unexpected map hover payload: " ++ T.pack (Prelude.show other))
 
