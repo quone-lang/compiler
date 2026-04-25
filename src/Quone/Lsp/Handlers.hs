@@ -606,10 +606,18 @@ preludeSymbols =
 fullRange :: Text -> Json.Value
 fullRange src =
     let
-        nLines :: Int
-        nLines =
-            Prelude.fromIntegral
-                (T.length (T.filter (Prelude.== '\n') src))
+        ls =
+            T.splitOn "\n" src
+
+        endLine :: Int
+        endLine =
+            Prelude.fromIntegral (Prelude.length ls Prelude.- 1)
+
+        endCharacter :: Int
+        endCharacter =
+            case Prelude.reverse ls of
+                lastLine : _ -> Prelude.fromIntegral (T.length lastLine)
+                [] -> 0
     in
     Json.object
         [ ("start"
@@ -619,7 +627,7 @@ fullRange src =
                 ])
         , ("end"
           , Json.object
-                [ ("line", Json.int nLines)
-                , ("character", Json.int 0)
+                [ ("line", Json.int endLine)
+                , ("character", Json.int endCharacter)
                 ])
         ]

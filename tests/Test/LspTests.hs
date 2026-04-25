@@ -35,6 +35,8 @@ suite =
             Prelude.pure hoverFormatsLargeSignaturesLikeQuone
         , Harness.test "lsp/hover_shows_dplyr_verb_signature" <|
             Prelude.pure hoverShowsDplyrVerbSignature
+        , Harness.test "lsp/formatting_replaces_final_line_without_trailing_newline" <|
+            Prelude.pure formattingReplacesFinalLineWithoutTrailingNewline
         ]
 
 
@@ -371,4 +373,67 @@ hoverShowsDplyrVerbSignature =
 
         other ->
             Fail ("unexpected verb hover payload: " ++ T.pack (Prelude.show other))
+
+
+formattingReplacesFinalLineWithoutTrailingNewline :: TestResult
+formattingReplacesFinalLineWithoutTrailingNewline =
+    let
+        uri =
+            "file:///format-no-newline.Q"
+
+        src =
+            "answer<-42"
+
+        openParams =
+            Json.object
+                [ ( "textDocument"
+                  , Json.object
+                        [ ("uri", Json.str uri)
+                        , ("version", Json.int 1)
+                        , ("text", Json.str src)
+                        ]
+                  )
+                ]
+
+        formatParams =
+            Json.object
+                [ ( "textDocument"
+                  , Json.object [("uri", Json.str uri)]
+                  )
+                ]
+
+        (state, _) =
+            Handlers.handleDidOpen openParams State.empty
+
+        result =
+            Handlers.handleFormatting formatParams state
+    in
+    case result of
+        Json.VArray [edit] ->
+            let
+                mRange =
+                    Json.lookupField "range" edit
+
+                mNewText =
+                    Json.lookupField "newText" edit Prelude.>>= Json.asString
+
+                mEnd =
+                    mRange Prelude.>>= Json.lookupField "end"
+
+                mEndLine =
+                    mEnd Prelude.>>= Json.lookupField "line" Prelude.>>= Json.asInt
+
+                mEndCharacter =
+                    mEnd Prelude.>>= Json.lookupField "character" Prelude.>>= Json.asInt
+            in
+            if mEndLine Prelude.== Just 0
+                && mEndCharacter Prelude.== Just (Prelude.fromIntegral (T.length src))
+                && mNewText Prelude.== Just "answer <- 42.0\n"
+            then
+                Pass
+            else
+                Fail ("unexpected formatting edit: " ++ T.pack (Prelude.show edit))
+
+        other ->
+            Fail ("unexpected formatting response: " ++ T.pack (Prelude.show other))
 
