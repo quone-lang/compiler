@@ -19,6 +19,12 @@ type Logical <- True | False
 type Maybe a <- Nothing | Just a
 #' Fallible result. `Ok value` is success; `Err error` is failure.
 type Result e a <- Err e | Ok a
+#' Summary marker values interpreted by dataframe summarization.
+type SummaryValue <- CountRows
+
+#' Number of rows in the current summary group.
+count : SummaryValue
+count <- CountRows
 
 #' Convert an Integer to a Double explicitly.
 extern elementwise to_double : Integer -> Double = "as.double"
@@ -47,8 +53,6 @@ extern elementwise map2 : (a -> b -> c) -> Vector a -> Vector b -> Vector c = "p
 
 #' Count the elements in a vector.
 extern reducer length : Vector a -> Integer = "length"
-#' Count the elements in a vector.
-extern reducer count : Vector a -> Integer = "length"
 #' Arithmetic mean.
 extern reducer mean : Vector Double -> Double = "mean"
 #' Median.

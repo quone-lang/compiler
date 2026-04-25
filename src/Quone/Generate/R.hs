@@ -294,6 +294,7 @@ preludeValueDeclsUsedBy used =
     [ DValue v
     | DValue v <- preludeValueDecls
     , Set.member (lowerText (valueDeclName v)) used
+    , lowerText (valueDeclName v) Prelude./= "count"
     ]
 
 
@@ -817,7 +818,7 @@ generatePipeRhs env = \case
         in
         case args of
             [] -> fn Prelude.<> "()"
-            _ -> callRMultiline fn (dplyrArgRs env args)
+            _ -> callRMultiline fn (dplyrArgRsForVerb env verb args)
     other -> generateExprIn env other
 
 
@@ -1249,9 +1250,12 @@ dplyrArgR env = \case
             Prelude.<> ")"
 
 
-dplyrArgRs :: GenEnv -> [DplyrArg] -> [Text]
-dplyrArgRs env =
-    Prelude.concatMap (dplyrArgRItems env)
+dplyrArgRsForVerb :: GenEnv -> Verb -> [DplyrArg] -> [Text]
+dplyrArgRsForVerb env verb =
+    Prelude.concatMap
+        (case verb of
+            VSummarize -> dplyrArgRItemsSummarize env
+            _ -> dplyrArgRItems env)
 
 
 dplyrArgRItems :: GenEnv -> DplyrArg -> [Text]
@@ -1265,11 +1269,33 @@ dplyrArgRItems env = \case
         ]
 
 
+dplyrArgRItemsSummarize :: GenEnv -> DplyrArg -> [Text]
+dplyrArgRItemsSummarize env = \case
+    DARecord _ fields -> Prelude.fmap (namedFieldSummarize env) fields
+    other -> dplyrArgRItems env other
+
+
 namedField :: GenEnv -> FieldBinding -> Text
 namedField env fb =
     lowerText (fieldBindingName fb)
         Prelude.<> " = "
         Prelude.<> generateExprIn env (fieldBindingValue fb)
+
+
+namedFieldSummarize :: GenEnv -> FieldBinding -> Text
+namedFieldSummarize env fb =
+    lowerText (fieldBindingName fb)
+        Prelude.<> " = "
+        Prelude.<> summarizeRhsR env (fieldBindingValue fb)
+
+
+summarizeRhsR :: GenEnv -> Expr -> Text
+summarizeRhsR env = \case
+    EVar n
+      | lowerText n Prelude.== "count" -> "dplyr::n()"
+    ECon n
+      | upperText n Prelude.== "CountRows" -> "dplyr::n()"
+    other -> generateExprIn env other
 
 
 callRMultiline :: Text -> [Text] -> Text

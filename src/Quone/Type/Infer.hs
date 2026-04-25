@@ -372,7 +372,7 @@ typeAtomToType params = \case
                 TyVarT (mkTyVar 0 (lowerText n))
     TParen _ inner -> typeSigToType params inner
     TRecord r -> TyRecord (recordFields params r)
-    TDataframe _ r -> TyDataframe (ungroupedDf (recordFields params r))
+    TDataframe _ r -> TyDataframe (ungroupedDf (dataframeFields params r))
 
 
 typeSigToType :: [TyVar] -> TypeSig -> Type
@@ -397,6 +397,25 @@ recordFields params (RecordType {recordTypeFields = fs}) =
             )
             fs
         )
+
+
+dataframeFields :: [TyVar] -> RecordType -> Map.Map Text Type
+dataframeFields params (RecordType {recordTypeFields = fs}) =
+    Map.fromList
+        (Prelude.fmap
+            (\f ->
+                ( lowerText (fieldTypeName f)
+                , dataframeFieldElementType (typeSigToType params (fieldTypeSig f))
+                )
+            )
+            fs
+        )
+
+
+dataframeFieldElementType :: Type -> Type
+dataframeFieldElementType = \case
+    TyApp (TyCon "Vector") inner -> inner
+    other -> other
 
 
 

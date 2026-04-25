@@ -210,7 +210,10 @@ typeSummarize infer env sp schema args = do
                     rhs = fieldBindingValue fb
                 t <- infer envGroup rhs
                 checkSummarizeRhs envGroup schema (fieldBindingSpan fb) rhs
-                Prelude.pure (lowerText (fieldBindingName fb), elementType t))
+                Prelude.pure
+                    ( lowerText (fieldBindingName fb)
+                    , summarizeResultType t
+                    ))
             fields
     Prelude.Right (Map.fromList cols)
 
@@ -557,6 +560,12 @@ elementType :: Type -> Type
 elementType = \case
     TyApp (TyCon "Vector") inner -> inner
     other -> other
+
+
+summarizeResultType :: Type -> Type
+summarizeResultType = \case
+    TyCon "SummaryValue" -> primInteger
+    other -> elementType other
 
 
 -- | Wrap a value type back into a @Vector@ for storage as a column.

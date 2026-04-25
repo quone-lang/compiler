@@ -257,7 +257,7 @@ renderTypePrec prec = \case
     Ty.TyRecord fs -> "{ " ++ renderRecord fs ++ " }"
     Ty.TyDataframe shape ->
         let
-            base = "dataframe { " ++ renderRecord (Ty.dfSchema shape) ++ " }"
+            base = "dataframe { " ++ renderDataframeRecord (Ty.dfSchema shape) ++ " }"
             grouping = case Ty.dfGroupingCols shape of
                 [] -> ""
                 gs -> " grouped by " ++ T.intercalate ", " gs
@@ -270,6 +270,14 @@ renderRecord m =
     T.intercalate ", "
         (Prelude.fmap
             (\(k, v) -> k ++ " : " ++ renderType v)
+            (Map.toAscList m))
+
+
+renderDataframeRecord :: Map.Map Text Ty.Type -> Text
+renderDataframeRecord m =
+    T.intercalate ", "
+        (Prelude.fmap
+            (\(k, v) -> k ++ " : Vector " ++ renderTypePrec 11 v)
             (Map.toAscList m))
 
 
@@ -312,7 +320,7 @@ renderTypeLines ty = case ty of
                 gs -> ["grouped by " ++ T.intercalate ", " gs]
         in
         "dataframe"
-            : indentTextLines 4 (renderRecordLines (Ty.dfSchema shape))
+            : indentTextLines 4 (renderDataframeRecordLines (Ty.dfSchema shape))
             Prelude.++ grouping
     other ->
         [renderType other]
@@ -346,6 +354,26 @@ renderRecordLines fields =
                     Prelude.concatMap (renderFieldLines ", ") rest
             in
             firstLines Prelude.++ restLines Prelude.++ ["}"]
+
+
+renderDataframeRecordLines :: Map.Map Text Ty.Type -> [Text]
+renderDataframeRecordLines fields =
+    case Map.toAscList fields of
+        [] -> ["{ }"]
+        first : rest ->
+            let
+                firstLines =
+                    renderDataframeFieldLines "{ " first
+
+                restLines =
+                    Prelude.concatMap (renderDataframeFieldLines ", ") rest
+            in
+            firstLines Prelude.++ restLines Prelude.++ ["}"]
+
+
+renderDataframeFieldLines :: Text -> (Text, Ty.Type) -> [Text]
+renderDataframeFieldLines prefix (name, ty) =
+    renderFieldLines prefix (name, Ty.TyApp (Ty.TyCon "Vector") ty)
 
 
 renderFieldLines :: Text -> (Text, Ty.Type) -> [Text]

@@ -31,6 +31,18 @@ suite =
                 Prelude.Right (CProgram {programDecls = [CDValue v]}) ->
                     Prelude.pure (lowerNameText (valueDeclName v) === "full_join")
                 other -> Prelude.pure (Fail ("unexpected parse result: " ++ showText other))
+        , Harness.test "parse/multiline_custom_type" <|
+            case parseProgram (T.unlines ["type A", "    <- First", "    | Second", "", "b <- First"]) of
+                Prelude.Right (CProgram {programDecls = [CDType td, CDValue v]}) ->
+                    Prelude.pure
+                        ( (upperNameText (typeDeclName td), lowerNameText (valueDeclName v))
+                            === ("A", "b")
+                        )
+                other -> Prelude.pure (Fail ("unexpected parse result: " ++ showText other))
+        , Harness.test "parse/rejects_indented_top_level_declaration" <|
+            case parseProgram (T.unlines ["type A", "    <- First", "", "b <- First", "    b <- First"]) of
+                Prelude.Left _ -> Prelude.pure Pass
+                other -> Prelude.pure (Fail ("expected parse failure, got: " ++ showText other))
         ]
 
 

@@ -323,7 +323,7 @@ renderType prec = \case
             schemaText =
                 "dataframe { "
                     Prelude.<> T.intercalate ", "
-                        (Prelude.fmap renderField (Map.toList (dfSchema shape)))
+                        (Prelude.fmap renderDataframeField (Map.toList (dfSchema shape)))
                     Prelude.<> " }"
             groupingText = case dfGroupingCols shape of
                 [] -> ""
@@ -334,6 +334,11 @@ renderType prec = \case
 
 renderField :: (Text, Type) -> Text
 renderField (name, t) = name Prelude.<> " : " Prelude.<> renderType 0 t
+
+
+renderDataframeField :: (Text, Type) -> Text
+renderDataframeField (name, t) =
+    name Prelude.<> " : Vector " Prelude.<> renderType 2 t
 
 
 showScheme :: Scheme -> Text

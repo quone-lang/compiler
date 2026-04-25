@@ -142,6 +142,26 @@ peekSig = P <| \s ->
         (t : _) -> POk t s
 
 
+-- | Skip only layout that may separate top-level declarations.
+--
+-- Unlike 'skipLayout', this deliberately does NOT skip 'TIndent'. An
+-- indented value definition at top level is usually a user mistake;
+-- skipping 'TIndent' here silently promoted it into a fresh top-level
+-- declaration, which made formatter output appear to duplicate bindings.
+skipTopLevelLayout :: P ()
+skipTopLevelLayout = P <| \s ->
+    POk () (s {stateTokens = dropTopLevelLayout (stateTokens s)})
+
+
+dropTopLevelLayout :: [Located Token] -> [Located Token]
+dropTopLevelLayout = Prelude.dropWhile (\lt -> isTopLevelLayout (locValue lt))
+  where
+    isTopLevelLayout = \case
+        TNewline -> Prelude.True
+        TDedent -> Prelude.True
+        _ -> Prelude.False
+
+
 -- | Skip newlines, indents, and dedents.
 --
 -- The parser uses 'skipLayout' explicitly between top-level
@@ -348,18 +368,18 @@ expectDocBlock = P <| \s ->
 
 pProgram :: P CProgram
 pProgram = do
-    skipLayout
+    skipTopLevelLayout
     -- A doc block immediately preceding `module ...` documents the
     -- module itself. We accept it for ergonomics but don't yet wire
     -- it to anywhere; per LANGUAGE.md section 14.6 module-level doc
     -- is `[planned]`. Discarding for initial release keeps idiomatic R-package
     -- file headers (one-line summary above `module`) round-trippable.
     _ <- optional_ (try_ expectDocBlock)
-    skipLayout
+    skipTopLevelLayout
     mModule <- optional_ (try_ pModuleDecl)
-    skipLayout
-    decls <- many_ (pDecl <* skipLayout)
-    skipLayout
+    skipTopLevelLayout
+    decls <- many_ (pDecl <* skipTopLevelLayout)
+    skipTopLevelLayout
     _ <- expectTok TEof
     let
         sp = case mModule of
@@ -430,9 +450,11 @@ pExportItem =
 
 pDecl :: P CDecl
 pDecl = do
-    skipLayout
+    skipTopLevelLayout
+    rejectIndentedTopLevelDecl
     mDoc <- optional_ (try_ expectDocBlock)
-    skipLayout
+    skipTopLevelLayout
+    rejectIndentedTopLevelDecl
     nextSig <- peekSig
     case locValue nextSig of
         TKeyword KType ->
@@ -464,6 +486,16 @@ pDecl = do
             CDValue <$> pValueDecl mDoc
 
 
+rejectIndentedTopLevelDecl :: P ()
+rejectIndentedTopLevelDecl = do
+    next <- peek
+    case locValue next of
+        TIndent ->
+            P (\st -> PErr (parseFail "unexpected indentation at top level" st))
+        _ ->
+            Prelude.pure ()
+
+
 -- | Span helper that reaches into each declaration kind.
 declSpan :: CDecl -> SourceSpan
 declSpan = \case
@@ -485,9 +517,11 @@ pTypeDecl mDoc = do
     s <- expectKeyword KType
     name <- expectUpperIdent
     params <- many_ expectLowerIdent
+    skipLayout
     _ <- expectTok TBind
+    skipLayout
     first <- pVariant
-    rest <- many_ (expectTok TPipeBar *> pVariant)
+    rest <- many_ (expectTok TPipeBar *> skipLayout *> pVariant)
     let variants = first : rest
     let sp = unionSpan s (variantSpan (Prelude.last variants))
     Prelude.pure
@@ -504,7 +538,11 @@ pTypeDecl mDoc = do
 pVariant :: P CVariant
 pVariant = do
     name <- expectUpperIdent
-    args <- many_ pTypeAtom
+    args <- many_ (try_ <| do
+        crossed <- crossedLine
+        when crossed
+            (P (\st -> PErr (parseFail "" st)))
+        pTypeAtom)
     let
         startSpan = upperNameSpan name
         endSpan = case args of

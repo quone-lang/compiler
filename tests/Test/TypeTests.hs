@@ -40,6 +40,18 @@ suite =
                 )
                 "label"
                 "Character"
+        , Harness.test "type/displays_dataframe_columns_as_vectors" <|
+            inferBinding
+                ( T.unlines
+                    [ "mtcars_demo <-"
+                    , "    mtcars"
+                    , "        |> filter (mpg > mean mpg)"
+                    , "        |> group_by { cyl }"
+                    , "        |> summarize { n_cars = count, avg_mpg = mean mpg }"
+                    ]
+                )
+                "mtcars_demo"
+                "dataframe { avg_mpg : Vector Double, cyl : Vector Integer, n_cars : Vector Integer }"
         ]
 
 
