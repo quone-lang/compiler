@@ -56,6 +56,12 @@ suite =
                     "row<-{a=1,b=2}"
                     "row <- { a = 1, b = 2 }\n"
                 )
+        , Harness.test "format/function_body_stays_below_bind" <|
+            Prelude.pure
+                ( assertFormatted
+                    "add x y <- x + y"
+                    (T.unlines ["add x y <-", "    x + y"])
+                )
         , Harness.test "format/preserves_foreign_import_alias_and_via" <|
             Prelude.pure
                 ( assertFormatted

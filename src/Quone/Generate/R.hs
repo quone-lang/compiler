@@ -827,6 +827,8 @@ generatePipeRhs env = \case
         case args of
             [] -> fn Prelude.<> "()"
             _ -> callRMultiline fn (dplyrArgRsForVerb env verb args)
+    EVar n ->
+        callR (generateExprIn env (EVar n)) []
     other -> generateExprIn env other
 
 

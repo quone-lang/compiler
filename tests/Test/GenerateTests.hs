@@ -29,6 +29,25 @@ suite =
             expectGeneratedContains
                 "passing <- dataframe { name = [\"Ada\"], score = [90] } |> filter (score > 80)"
                 "dplyr::filter(score > 80)"
+        , Harness.test "generate/generic_pipe_rhs_function_names_are_calls" <|
+            expectGeneratedContains
+                ( T.unlines
+                    [ "rmse : Vector Double -> Vector Double -> Double"
+                    , "rmse actuals predictions <-"
+                    , "    (predictions - actuals) ^ 2"
+                    , "        |> mean"
+                    , "        |> sqrt"
+                    , ""
+                    , "actuals : Vector Double"
+                    , "actuals <- [2.1, 3.4, 4.0]"
+                    , ""
+                    , "predictions : Vector Double"
+                    , "predictions <- [2.0, 3.7, 3.8]"
+                    , ""
+                    , "error <- rmse actuals predictions"
+                    ]
+                )
+                (T.unlines ["mean() |>", "    sqrt()"])
         , Harness.test "generate/formats_dataframe_pipeline_readably" <|
             expectGenerated mtcarsSource mtcarsExpectedR
         , Harness.test "generate/builtin_mtcars_dataset" <|

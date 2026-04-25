@@ -364,7 +364,8 @@ formatValue v =
                 <+> text "<-"
         body = formatExpr (valueDeclBody v)
         renderedBody =
-            if exprIsMultiline (valueDeclBody v)
+            if Prelude.not (Prelude.null (valueDeclParams v))
+                || exprIsMultiline (valueDeclBody v)
                 then head_ <> line <> Doc.indent 4 body
                 else group (head_ <+> body)
     in
