@@ -2,6 +2,7 @@ module Main where
 
 import qualified Prelude
 import qualified Test.CliTests
+import qualified Test.ExampleTests
 import qualified Test.FormatTests
 import qualified Test.GenerateTests
 import qualified Test.Harness as Harness
@@ -22,6 +23,7 @@ main =
         , Test.VerbTests.suite
         , Test.GenerateTests.suite
         , Test.FormatTests.suite
+        , Test.ExampleTests.suite
         , Test.LspTests.suite
         , Test.CliTests.suite
         , Test.ReleaseTests.suite

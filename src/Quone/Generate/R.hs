@@ -355,13 +355,21 @@ valueDecl env v =
         docCommentLines = case valueDeclDoc v of
             Nothing -> []
             Just block ->
-                Prelude.fmap (\l -> "#' " Prelude.<> l) (docLines block)
+                Prelude.fmap formatDocLine (docLines block)
         assignLines =
             prefixFirstLine
                 (lowerText (valueDeclName v) Prelude.<> " <- ")
                 rendered
     in
     foldLines (docCommentLines Prelude.++ assignLines)
+
+
+formatDocLine :: Text -> Text
+formatDocLine docLine =
+    if T.null docLine then
+        "#'"
+    else
+        "#' " Prelude.<> docLine
 
 
 foldLines :: [Text] -> Doc

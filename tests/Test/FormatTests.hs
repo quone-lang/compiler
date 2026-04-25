@@ -32,6 +32,12 @@ suite =
                     "# keep me\nx <- 1"
                     "# keep me\nx <- 1.0\n"
                 )
+        , Harness.test "format/preserves_top_of_file_doc_comment" <|
+            Prelude.pure
+                ( assertFormatted
+                    "#' Hello\n#'\nx <- 1"
+                    "#' Hello\n#'\nx <- 1.0\n"
+                )
         , Harness.test "format/preserves_between_decl_comment" <|
             Prelude.pure
                 ( assertFormatted
@@ -43,6 +49,23 @@ suite =
                 ( assertFormatted
                     "row<-{a=1,b=2}"
                     "row <- { a = 1.0, b = 2.0 }\n"
+                )
+        , Harness.test "format/preserves_foreign_import_alias_and_via" <|
+            Prelude.pure
+                ( assertFormatted
+                    "import pkg.fn as f : a -> a via \"pkg::fn($1)\""
+                    "import pkg.fn as f : a -> a via \"pkg::fn($1)\"\n"
+                )
+        , Harness.test "format/join_output_parses_without_on_keyword" <|
+            Prelude.pure
+                ( assertFormatted
+                    "joined <- students |> left_join schools { school_id = id }"
+                    ( T.unlines
+                        [ "joined <-"
+                        , "    students"
+                        , "        |> left_join schools { school_id = id }"
+                        ]
+                    )
                 )
         , Harness.test "format/mtcars_pipeline_matches_canonical_output" <|
             Prelude.pure (assertFormatted mtcarsSource mtcarsExpected)

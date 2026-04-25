@@ -39,6 +39,14 @@ suite =
                             === ("A", "b")
                         )
                 other -> Prelude.pure (Fail ("unexpected parse result: " ++ showText other))
+        , Harness.test "parse/multiline_pipeline_before_next_binding" <|
+            case parseProgram (T.unlines ["passing <-", "    students", "        |> filter (score > 70)", "        |> arrange (desc score)", "", "by_dept <-", "    students", "        |> group_by { dept }"]) of
+                Prelude.Right (CProgram {programDecls = [CDValue passing, CDValue byDept]}) ->
+                    Prelude.pure
+                        ( (lowerNameText (valueDeclName passing), lowerNameText (valueDeclName byDept))
+                            === ("passing", "by_dept")
+                        )
+                other -> Prelude.pure (Fail ("unexpected parse result: " ++ showText other))
         , Harness.test "parse/rejects_indented_top_level_declaration" <|
             case parseProgram (T.unlines ["type A", "    <- First", "", "b <- First", "    b <- First"]) of
                 Prelude.Left _ -> Prelude.pure Pass

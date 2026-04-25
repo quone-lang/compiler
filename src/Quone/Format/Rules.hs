@@ -264,15 +264,24 @@ formatImport = \case
                 if T.null pkg
                     then lowerText (foreignNameFn fname)
                     else pkg ++ "." ++ lowerText (foreignNameFn fname)
+            aliasDoc = case foreignNameAlias fname of
+                Prelude.Nothing -> empty
+                Just alias -> space <> text "as" <+> text (lowerText alias)
+            viaDoc = case foreignNameVia fname of
+                Prelude.Nothing -> empty
+                Just template -> space <> text "via" <+> dquote <> text template <> dquote
             head_ = case classification of
                 CCOpaque -> text "import"
                 CCElementwise -> text "import" <+> text "elementwise"
                 CCReducer -> text "import" <+> text "reducer"
+            dquote = text "\""
         in
         head_
             <+> text qualified
+            <> aliasDoc
             <+> text ":"
             <+> formatTypeSig sig
+            <> viaDoc
 
 
 formatSelection :: CImportSelection -> Doc
@@ -728,7 +737,6 @@ formatDplyrArg = \case
     CDAModifier m -> formatModifier m
     CDAJoinOn _ target pairs ->
         formatExprAtomic target
-            <+> text "on"
             <+> text "{ "
             <> hsepCommas (Prelude.fmap formatJoinPair pairs)
             <> text " }"
@@ -824,8 +832,16 @@ formatDoc = \case
     Prelude.Nothing -> empty
     Just b ->
         concatD
-            (Prelude.fmap (\l -> text "#' " <> text l <> line)
+            (Prelude.fmap (\l -> text (formatDocLine l) <> line)
                 (docBlockLines b))
+
+
+formatDocLine :: Text -> Text
+formatDocLine docLine =
+    if T.null docLine then
+        "#'"
+    else
+        "#' " Prelude.<> docLine
 
 
 

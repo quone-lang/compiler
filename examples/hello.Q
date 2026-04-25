@@ -1,2 +1,1 @@
-answer <- 42
-
+answer <- 42.0

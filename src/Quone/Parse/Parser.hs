@@ -370,13 +370,23 @@ pProgram :: P CProgram
 pProgram = do
     skipTopLevelLayout
     -- A doc block immediately preceding `module ...` documents the
-    -- module itself. We accept it for ergonomics but don't yet wire
-    -- it to anywhere; per LANGUAGE.md section 14.6 module-level doc
-    -- is `[planned]`. Discarding for initial release keeps idiomatic R-package
-    -- file headers (one-line summary above `module`) round-trippable.
-    _ <- optional_ (try_ expectDocBlock)
+    -- module itself. Only consume it when a module declaration follows;
+    -- otherwise the first value/type declaration owns the doc block.
+    mModule <- optional_ (try_ <| do
+        _ <- optional_ (try_ expectDocBlock)
+        skipTopLevelLayout
+        pModuleDecl)
     skipTopLevelLayout
-    mModule <- optional_ (try_ pModuleDecl)
+    -- A leading file-level doc block may be followed by a separate doc
+    -- block for the first declaration, as in the embedded prelude. Keep
+    -- declaration docs attachable by discarding only the earlier block.
+    _ <- many_ (try_ <| do
+        _ <- expectDocBlock
+        skipTopLevelLayout
+        nextSig <- peekSig
+        case locValue nextSig of
+            TDocBlock _ -> Prelude.pure ()
+            _ -> P (\st -> PErr (parseFail "" st)))
     skipTopLevelLayout
     decls <- many_ (pDecl <* skipTopLevelLayout)
     skipTopLevelLayout
@@ -1599,6 +1609,15 @@ pDplyrArg = do
                                         )
                                         names
                             Prelude.pure (CDARecord (unionSpan s e) fields)
+        TLowerIdent _ -> do
+            -- Plain column/value arguments are single-line only. This
+            -- keeps a final verb such as `arrange (desc score)` from
+            -- accidentally consuming the next top-level binding as
+            -- another verb argument.
+            crossed <- crossedLine
+            when crossed
+                (P (\st -> PErr (parseFail "" st)))
+            CDAExpr <$> pAccess
         _ ->
             CDAExpr <$> pAccess
 

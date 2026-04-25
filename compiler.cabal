@@ -98,6 +98,7 @@ test-suite quonec-test
     main-is:          Spec.hs
     other-modules:
         Test.CliTests
+        Test.ExampleTests
         Test.FormatTests
         Test.GenerateTests
         Test.Harness
