@@ -50,7 +50,7 @@ Everything else is identical:
 | Rule                                       | Value                          |
 | ------------------------------------------ | ------------------------------ |
 | Indent                                     | 4 spaces                       |
-| Page width                                 | 100 columns                    |
+| Page width                                 | 80 columns                     |
 | Tabs                                       | rejected at layout positions   |
 | Blank lines between top-level declarations | exactly 2                      |
 | Trailing newline                           | required                       |

@@ -41,10 +41,9 @@ import qualified Prelude
 
 
 
--- | The page width used for line-breaking decisions. 100 columns
--- matches the formatter spec in the project plan.
+-- | The page width used for line-breaking decisions.
 width :: Prelude.Int
-width = 100
+width = 80
 
 
 -- | A small Wadler-style document.

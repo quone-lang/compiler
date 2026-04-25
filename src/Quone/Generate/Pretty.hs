@@ -76,7 +76,7 @@ indent n d = Indent n d
 
 
 render :: Doc -> Text
-render = T.intercalate "\n" Prelude.. go 0
+render = T.intercalate "\n" Prelude.. Prelude.concatMap wrapLine Prelude.. go 0
   where
     go :: Int -> Doc -> [Text]
     go n = \case
@@ -84,6 +84,59 @@ render = T.intercalate "\n" Prelude.. go 0
         Line t -> [T.replicate (Prelude.fromIntegral n) " " Prelude.<> t]
         Indent k inner -> go (n Prelude.+ k) inner
         Concat ds -> Prelude.concatMap (go n) ds
+
+
+wrapLine :: Text -> [Text]
+wrapLine line_
+    | T.length line_ Prelude.<= 80 = [line_]
+    | Prelude.otherwise =
+        let
+            indentText = T.takeWhile (Prelude.== ' ') line_
+            indentWidth :: Prelude.Int
+            indentWidth = T.length indentText
+            continuationIndent = indentText Prelude.<> T.replicate 2 " "
+            available :: Prelude.Int
+            available = Prelude.max 20 (80 Prelude.- indentWidth)
+        in
+        case breakLine available line_ of
+            Nothing -> [line_]
+            Just (first, rest) ->
+                first : wrapLine (continuationIndent Prelude.<> T.stripStart rest)
+
+
+breakLine :: Prelude.Int -> Text -> Maybe (Text, Text)
+breakLine limit line_
+    | T.length line_ Prelude.<= limit = Nothing
+    | Prelude.otherwise =
+        let
+            prefix = T.take limit line_
+            breakChars = [", ", " |> ", " + ", " - ", " * ", " / ", " = "]
+            candidates =
+                [ (idx Prelude.+ T.length sep, idx Prelude.+ T.length sep)
+                | sep <- breakChars
+                , idx <- indices sep prefix
+                ]
+        in
+        case candidates of
+            [] -> Nothing
+            xs ->
+                let
+                    breakAt = Prelude.maximum (Prelude.fmap Prelude.fst xs)
+                    first = T.stripEnd (T.take breakAt line_)
+                    rest = T.drop breakAt line_
+                in
+                Just (first, rest)
+
+
+indices :: Text -> Text -> [Prelude.Int]
+indices needle haystack
+    | T.null needle = []
+    | Prelude.otherwise = go 0 haystack
+  where
+    go offset rest
+        | T.null rest = []
+        | needle `T.isPrefixOf` rest = offset : go (offset Prelude.+ 1) (T.drop 1 rest)
+        | Prelude.otherwise = go (offset Prelude.+ 1) (T.drop 1 rest)
 
 
 
